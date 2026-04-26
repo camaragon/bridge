@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.runtime import normalize_agent_id
 from bridge_wrapper_common import api_request, archive_result, create_result, invoke, list_result, set_status_result, status_result

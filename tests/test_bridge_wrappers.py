@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -74,3 +76,20 @@ def test_generic_wrapper_refuses_cli_fallback_unless_enabled(monkeypatch):
 
     with pytest.raises(SystemExit, match='bridge API unavailable'):
         bridge_agent.main()
+
+
+def test_bridge_agent_script_runs_directly_from_repo_root():
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / 'scripts' / 'bridge_agent.py'),
+            '--help',
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert 'Generic Bridge wrapper for any configured agent' in result.stdout
