@@ -1,6 +1,6 @@
 # Example deployment units
 
-These units are templates, not drop-in copies of Cameron's live host-specific services.
+These units are templates, not drop-in copies of one specific live host deployment.
 
 ## Files
 - `bridge-api.service` — local Bridge API server

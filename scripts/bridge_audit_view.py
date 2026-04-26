@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import sys
 
@@ -13,10 +14,10 @@ from bridge_core.models import ACTIVE_STATUSES, now_iso
 from bridge_core.policy import ALLOWED_ROUTES
 from bridge_core.tooling import LoadedHandoff, load_archive_entry, summarize_handoffs
 
-ROOT = Path('/home/caragon/agent-shared')
-BRIDGE = ROOT / 'bridge'
-OUTPUT = Path('/home/caragon/hermes/System/Bridge Audit View.md')
-ARCHIVE_OUTPUT = Path('/home/caragon/hermes/System/Bridge Archive Index.md')
+ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
+BRIDGE = Path(os.environ.get('BRIDGE_ROOT', str(ROOT / 'bridge')))
+OUTPUT = Path(os.environ.get('BRIDGE_AUDIT_OUTPUT', str(BRIDGE / 'audit' / 'Bridge Audit View.md')))
+ARCHIVE_OUTPUT = Path(os.environ.get('BRIDGE_ARCHIVE_OUTPUT', str(BRIDGE / 'audit' / 'Bridge Archive Index.md')))
 ACTIVE = set(ACTIVE_STATUSES)
 ARCHIVE_LIMIT = 25
 
@@ -123,7 +124,7 @@ def build_archive_index(archived):
     lines = [
         '# Bridge Archive Index',
         '',
-        '> Auto-generated from `/home/caragon/agent-shared` for human audit. Edit source scripts, not this note.',
+        f'> Auto-generated from `{ROOT}` for human audit. Edit source scripts, not this note.',
         '',
         f'- Last refreshed: `{now_iso()}`',
         f'- Archived handoffs included: **{len(recent)}**',
@@ -197,7 +198,7 @@ def main():
     lines = [
         '# Bridge Audit View',
         '',
-        '> Auto-generated from `/home/caragon/agent-shared` for human audit. Edit source scripts, not this note.',
+        f'> Auto-generated from `{ROOT}` for human audit. Edit source scripts, not this note.',
         '',
         f'- Last refreshed: `{now_iso()}`',
         f'- Total active handoffs: **{total_open}**',
@@ -264,10 +265,10 @@ def main():
     lines += [
         '',
         '## Quick Commands',
-        '- `python3 /home/caragon/agent-shared/scripts/bridge_hermes.py list-open`',
-        '- `python3 /home/caragon/agent-shared/scripts/bridge_jordan.py create --recipient hermes ...`',
-        '- `python3 /home/caragon/agent-shared/scripts/bridge_jarvy.py create --recipient hermes ...`',
-        '- `python3 /home/caragon/agent-shared/scripts/bridge_patrol.py --stuck-hours 24`  # built-in 0.5h active unresolved alert + reminder/escalation checks',
+        '- `python3 ./scripts/bridge_hermes.py list-open`',
+        '- `python3 ./scripts/bridge_jordan.py create --recipient hermes ...`',
+        '- `python3 ./scripts/bridge_jarvy.py create --recipient hermes ...`',
+        '- `python3 ./scripts/bridge_patrol.py --stuck-hours 24`  # built-in 0.5h active unresolved alert + reminder/escalation checks',
     ]
 
     OUTPUT.write_text('\n'.join(lines) + '\n', encoding='utf-8')

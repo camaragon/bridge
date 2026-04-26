@@ -19,9 +19,9 @@ from bridge_core.models import ACTIVE_STATUSES
 from bridge_core.policy import ALLOWED_ROUTES
 from bridge_core.tooling import summarize_handoffs
 
-ROOT = Path('/home/caragon/agent-shared')
-BRIDGE = ROOT / 'bridge'
-CONFIG = ROOT / 'config' / 'bridge_api.env'
+ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
+BRIDGE = Path(os.environ.get('BRIDGE_ROOT', str(ROOT / 'bridge')))
+CONFIG = Path(os.environ.get('BRIDGE_API_CONFIG', str(ROOT / 'config' / 'bridge_api.env')))
 EXPECTED_DIR_MODE = '700'
 EXPECTED_FILE_MODE = '600'
 EXPECTED_SCRIPT_MODE = '700'
@@ -33,7 +33,7 @@ DEFAULT_ESCALATE_AFTER_HOURS = 6.0
 DEFAULT_ESCALATE_REPEAT_HOURS = 24.0
 DEFAULT_ACTIVE_ALERT_HOURS = 0.5
 DEFAULT_NOTIFY_TIMEOUT_SECONDS = 1.0
-PATROL_STATE_PATH = BRIDGE / 'audit' / 'patrol-reminders.json'
+PATROL_STATE_PATH = Path(os.environ.get('BRIDGE_PATROL_STATE_PATH', str(BRIDGE / 'audit' / 'patrol-reminders.json')))
 ACTIVE = set(ACTIVE_STATUSES)
 FOLLOW_UP_STATUSES = {'open', 'acknowledged', 'in_progress', 'blocked'}
 SUMMARY_PLACEHOLDERS = {'', 'pending', 'none', 'n/a', 'na'}

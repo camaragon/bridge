@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -17,8 +18,8 @@ from bridge_core.policy import RoutePolicyError, require_actor_access, require_r
 from bridge_core.repository import HandoffNotFoundError
 from bridge_core.service import BridgeService
 
-ROOT = Path('/home/caragon/agent-shared')
-BRIDGE = ROOT / 'bridge'
+ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
+BRIDGE = Path(os.environ.get('BRIDGE_ROOT', str(ROOT / 'bridge')))
 AUDIT = BRIDGE / 'audit' / 'handoff-log.md'
 ALLOWED = {
     ('jordan', 'hermes'),

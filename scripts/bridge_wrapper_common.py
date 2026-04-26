@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 from bridge_core.auth import load_agent_tokens
 
-DEFAULT_ROOT = Path('/home/caragon/agent-shared')
+DEFAULT_ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
 DEFAULT_API_URL = 'http://127.0.0.1:8427'
 DEFAULT_CONFIG_PATH = DEFAULT_ROOT / 'config' / 'bridge_api.env'
 CLI_PATH = DEFAULT_ROOT / 'scripts' / 'bridge_cli.py'

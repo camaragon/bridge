@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT_DIR = Path('/home/caragon/agent-shared')
+ROOT_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT_DIR / 'scripts'
 for path in (ROOT_DIR, SCRIPTS_DIR):
     if str(path) not in sys.path:
@@ -17,7 +17,7 @@ def bridge_sandbox(tmp_path, monkeypatch):
     import bridge_cli
     import bridge_audit_view
 
-    root = tmp_path / 'agent-shared'
+    root = tmp_path / 'bridge'
     bridge = root / 'bridge'
     for kind in ('incoming', 'outgoing'):
         for agent in bridge_cli.AGENTS:

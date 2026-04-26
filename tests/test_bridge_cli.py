@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
@@ -112,3 +115,37 @@ def test_archive_requires_closed_status(bridge_sandbox, capsys):
 
     with pytest.raises(SystemExit, match='only closed handoffs can be archived'):
         bridge_cli.archive(Namespace(actor='jordan', handoff_id=handoff_id))
+
+
+def test_relocated_bridge_cli_uses_repo_relative_root(tmp_path):
+    source_root = Path(__file__).resolve().parents[1]
+    relocated_root = tmp_path / 'bridge-copy'
+    relocated_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['cp', '-R', str(source_root / 'bridge_core'), str(relocated_root / 'bridge_core')], check=True)
+    subprocess.run(['cp', '-R', str(source_root / 'scripts'), str(relocated_root / 'scripts')], check=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(relocated_root / 'scripts' / 'bridge_cli.py'),
+            'create',
+            '--sender', 'hermes',
+            '--recipient', 'jordan',
+            '--issue-type', 'task',
+            '--subject', 'Relocated root test',
+            '--requested-action', 'Verify repo-relative defaults',
+            '--minimal-context', 'Copied repo should use its own bridge directory',
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+
+    expected_outbox = relocated_root / 'bridge' / 'outgoing' / 'hermes' / f"{payload['handoff_id']}.md"
+    expected_inbox = relocated_root / 'bridge' / 'incoming' / 'jordan' / f"{payload['handoff_id']}.md"
+
+    assert Path(payload['outbox']) == expected_outbox
+    assert Path(payload['inbox']) == expected_inbox
+    assert expected_outbox.exists()
+    assert expected_inbox.exists()

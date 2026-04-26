@@ -23,7 +23,7 @@ The Bridge provides a **minimal shared transport**, not pooled memory. Phase 3 a
 - `audit/`
 
 ## bridge_core
-`/home/caragon/agent-shared/bridge_core` holds the shared Bridge logic:
+`./bridge_core` holds the shared Bridge logic:
 - `models.py` — handoff schema and defaults
 - `policy.py` — route, actor, and status safety rules
 - `auth.py` — token loading and validation
@@ -46,7 +46,7 @@ This is enforced in both `bridge_cli.py` and `bridge_api_server.py` through `bri
 ## Local API
 Default server:
 ```bash
-python3 /home/caragon/agent-shared/scripts/bridge_api_server.py
+python3 ./scripts/bridge_api_server.py
 ```
 Default bind: `127.0.0.1:8427`
 
@@ -66,7 +66,7 @@ Endpoints:
 - accepted headers:
   - `Authorization: Bearer <token>`
   - `X-Bridge-Token: <token>`
-- token file default: `/home/caragon/agent-shared/config/bridge_api.env`
+- token file default: `./config/bridge_api.env`
 - env overrides: `BRIDGE_TOKEN_HERMES`, `BRIDGE_TOKEN_JARVY`, `BRIDGE_TOKEN_JORDAN`
 
 ### Local-only binding
@@ -74,9 +74,9 @@ The intended posture is loopback-only operation on `127.0.0.1`. Do not expose th
 
 ## Wrapper behavior
 Preferred wrappers:
-- Hermes: `python3 /home/caragon/agent-shared/scripts/bridge_hermes.py ...`
-- Jarvy: `python3 /home/caragon/agent-shared/scripts/bridge_jarvy.py ...`
-- Jordan: `python3 /home/caragon/agent-shared/scripts/bridge_jordan.py ...`
+- Hermes: `python3 ./scripts/bridge_hermes.py ...`
+- Jarvy: `python3 ./scripts/bridge_jarvy.py ...`
+- Jordan: `python3 ./scripts/bridge_jordan.py ...`
 
 Phase 3 behavior:
 - wrappers attempt the local API first
@@ -84,27 +84,27 @@ Phase 3 behavior:
 - direct filesystem CLI fallback is opt-in only:
   - `--allow-cli-fallback`
   - `BRIDGE_WRAPPER_ALLOW_CLI_FALLBACK=1`
-- prompt intake can be automated with `python3 /home/caragon/agent-shared/scripts/bridge_intake_watch.py --agent hermes`
+- prompt intake can be automated with `python3 ./scripts/bridge_intake_watch.py --agent hermes`
 - the same notify endpoint now also receives lifecycle push payloads for `handoff_created`, `handoff_closed`, and `handoff_blocked`
 - patrol can issue low-risk reminder/escalation nudges for unacknowledged open handoffs by reusing those same notify endpoints
 
 ## CLI helper usage
-- `python3 /home/caragon/agent-shared/scripts/bridge_cli.py create ...`
-- `python3 /home/caragon/agent-shared/scripts/bridge_cli.py list-open --agent hermes`
-- `python3 /home/caragon/agent-shared/scripts/bridge_cli.py status --actor jordan HND-...`
-- `python3 /home/caragon/agent-shared/scripts/bridge_cli.py set-status --actor hermes HND-... in_progress`
-- `python3 /home/caragon/agent-shared/scripts/bridge_cli.py archive --actor jordan HND-...`
+- `python3 ./scripts/bridge_cli.py create ...`
+- `python3 ./scripts/bridge_cli.py list-open --agent hermes`
+- `python3 ./scripts/bridge_cli.py status --actor jordan HND-...`
+- `python3 ./scripts/bridge_cli.py set-status --actor hermes HND-... in_progress`
+- `python3 ./scripts/bridge_cli.py archive --actor jordan HND-...`
 
 ## Common wrapper shortcuts
-- `python3 /home/caragon/agent-shared/scripts/bridge_hermes.py ack HND-...`
-- `python3 /home/caragon/agent-shared/scripts/bridge_hermes.py block HND-... --outcome "Need approval"`
-- `python3 /home/caragon/agent-shared/scripts/bridge_hermes.py close HND-... --outcome "Done"`
+- `python3 ./scripts/bridge_hermes.py ack HND-...`
+- `python3 ./scripts/bridge_hermes.py block HND-... --outcome "Need approval"`
+- `python3 ./scripts/bridge_hermes.py close HND-... --outcome "Done"`
 - same shortcut pattern works for `bridge_jarvy.py` and `bridge_jordan.py`
 
 ## Runbook
 ### Start server
 ```bash
-python3 /home/caragon/agent-shared/scripts/bridge_api_server.py
+python3 ./scripts/bridge_api_server.py
 ```
 
 ### Health check
@@ -113,7 +113,7 @@ curl http://127.0.0.1:8427/v1/health
 ```
 
 ### Rotate tokens
-1. update `/home/caragon/agent-shared/config/bridge_api.env`
+1. update `./config/bridge_api.env`
 2. restart the API server
 3. verify authenticated wrapper/API calls still work
 
@@ -124,7 +124,7 @@ curl http://127.0.0.1:8427/v1/health
 - remove fallback override after recovery
 
 ### Verify no forbidden route opened
-- run `python3 /home/caragon/agent-shared/scripts/bridge_patrol.py --stuck-hours 24`
+- run `python3 ./scripts/bridge_patrol.py --stuck-hours 24`
 - confirm denied Jarvy ↔ Jordan API creation still returns 403
 
 ### Reminder / escalation patrol

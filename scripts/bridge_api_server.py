@@ -25,7 +25,7 @@ from bridge_core.policy import AccessPolicyError, BridgePolicyError, RoutePolicy
 from bridge_core.repository import HandoffNotFoundError
 from bridge_core.service import BridgeService
 
-DEFAULT_ROOT = Path("/home/caragon/agent-shared")
+DEFAULT_ROOT = Path(os.environ.get("BRIDGE_PROJECT_ROOT", str(SCRIPT_ROOT)))
 DEFAULT_BRIDGE_ROOT = DEFAULT_ROOT / "bridge"
 DEFAULT_CONFIG_PATH = DEFAULT_ROOT / "config" / "bridge_api.env"
 DEFAULT_HOST = "127.0.0.1"

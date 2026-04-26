@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import secrets
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_CONFIG = Path('/home/caragon/agent-shared/config/bridge_api.env')
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG = Path(os.environ.get('BRIDGE_API_CONFIG', str(DEFAULT_ROOT / 'config' / 'bridge_api.env')))
 DEFAULT_SERVICE = 'bridge-api.service'
 AGENTS = ('hermes', 'jarvy', 'jordan')
 TOKEN_KEYS = {agent: f'BRIDGE_TOKEN_{agent.upper()}' for agent in AGENTS}
