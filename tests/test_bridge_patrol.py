@@ -48,8 +48,9 @@ def _setup_patrol_root(tmp_path: Path, monkeypatch):
             (bridge / kind / agent).mkdir(parents=True, exist_ok=True)
     (bridge / 'archive').mkdir(parents=True, exist_ok=True)
     (bridge / 'audit').mkdir(parents=True, exist_ok=True)
-    (root / 'core').mkdir(parents=True, exist_ok=True)
     (root / 'scripts').mkdir(parents=True, exist_ok=True)
+    (root / 'docs').mkdir(parents=True, exist_ok=True)
+    (root / 'examples').mkdir(parents=True, exist_ok=True)
     audit_file = bridge / 'audit' / 'handoff-log.md'
     audit_file.write_text('', encoding='utf-8')
     audit_file.chmod(0o600)
@@ -68,13 +69,14 @@ def _setup_patrol_root(tmp_path: Path, monkeypatch):
 
     for path in [
         root,
-        root / 'core',
         bridge,
         bridge / 'incoming',
         bridge / 'outgoing',
         bridge / 'archive',
         bridge / 'audit',
         root / 'scripts',
+        root / 'docs',
+        root / 'examples',
         bridge / 'incoming' / 'agent-a',
         bridge / 'incoming' / 'agent-b',
         bridge / 'incoming' / 'agent-c',

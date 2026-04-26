@@ -32,10 +32,12 @@ Keep runtime state out of git.
 
 Bridge source code lives in:
 
-- `bridge_core/` — core models, policy, auth, storage, and service logic
+- `bridge_core/` — core Python package
 - `scripts/` — CLI, API server, patrol, intake watcher, wrappers, and helpers
 - `tests/` — regression and integration coverage
 - `config/` — example configuration only
 - `deploy/` — deployment templates
+- `docs/` — architecture and deployment documentation
+- `examples/` — sample handoff payloads
 
 Runtime state should be created by the deployment, not tracked in the repository.

@@ -28,6 +28,8 @@ Route policy is optional:
 
 You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` to adopt your own ecosystem.
 
+For deeper docs, start with `docs/README.md`.
+
 ## Repository layout
 
 - `bridge_core/` - core models, policy, auth, repository, and service logic
@@ -35,7 +37,8 @@ You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` t
 - `tests/` - pytest coverage for core flows, API, wrappers, patrol, and intake watchers
 - `config/bridge_api.example.env` - example config for API tokens and notify hooks
 - `deploy/systemd/` - generic systemd templates for self-hosted deployment
-- `docs/` - extra documentation such as runtime layout and deployment notes
+- `docs/` - architecture, deployment, and runtime documentation
+- `examples/handoffs/` - example markdown payloads for common handoff patterns
 
 ## Quick start
 

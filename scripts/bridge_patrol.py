@@ -306,13 +306,14 @@ def main():
 
     critical_dirs = [
         ROOT,
-        ROOT / 'core',
         ROOT / 'bridge',
         ROOT / 'bridge' / 'incoming',
         ROOT / 'bridge' / 'outgoing',
         ROOT / 'bridge' / 'archive',
         ROOT / 'bridge' / 'audit',
         ROOT / 'scripts',
+        ROOT / 'docs',
+        ROOT / 'examples',
     ]
     agents = list(discover_agents(bridge_root=BRIDGE, config_values=runtime_config))
     for agent in agents:
