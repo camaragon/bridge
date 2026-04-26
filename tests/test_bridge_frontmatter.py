@@ -18,10 +18,10 @@ def test_parse_frontmatter_normalizes_crlf_input() -> None:
 
 
 def test_parse_frontmatter_ignores_invalid_non_mapping_lines() -> None:
-    text = "---\nstatus: open\nthis is junk\nrecipient: jordan\n---\n\nBody\n"
+    text = "---\nstatus: open\nthis is junk\nrecipient: agent-c\n---\n\nBody\n"
     data, body = parse_frontmatter(text)
     assert data["status"] == "open"
-    assert data["recipient"] == "jordan"
+    assert data["recipient"] == "agent-c"
     assert body == "\nBody\n"
 
 

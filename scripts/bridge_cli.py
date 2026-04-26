@@ -12,8 +12,8 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.file_repository import FileBridgeRepository
-from bridge_core.frontmatter import FrontmatterError, parse_frontmatter as core_parse_frontmatter, render_frontmatter
-from bridge_core.models import AGENTS, ALL_STATUSES, ACTIVE_STATUSES, CreateHandoffInput, HandoffRecord
+from bridge_core.frontmatter import FrontmatterError, parse_frontmatter as core_parse_frontmatter
+from bridge_core.models import ALL_STATUSES, ACTIVE_STATUSES, CreateHandoffInput, HandoffRecord
 from bridge_core.policy import RoutePolicyError, require_actor_access, require_route, visible_queues_for_actor
 from bridge_core.repository import HandoffNotFoundError
 from bridge_core.service import BridgeService
@@ -21,12 +21,6 @@ from bridge_core.service import BridgeService
 ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
 BRIDGE = Path(os.environ.get('BRIDGE_ROOT', str(ROOT / 'bridge')))
 AUDIT = BRIDGE / 'audit' / 'handoff-log.md'
-ALLOWED = {
-    ('jordan', 'hermes'),
-    ('hermes', 'jordan'),
-    ('jarvy', 'hermes'),
-    ('hermes', 'jarvy'),
-}
 
 
 def repository() -> FileBridgeRepository:
@@ -173,8 +167,8 @@ def main():
     sub = p.add_subparsers(dest='cmd', required=True)
 
     c = sub.add_parser('create')
-    c.add_argument('--sender', required=True, choices=AGENTS)
-    c.add_argument('--recipient', required=True, choices=AGENTS)
+    c.add_argument('--sender', required=True)
+    c.add_argument('--recipient', required=True)
     c.add_argument('--issue-type', required=True)
     c.add_argument('--handoff-kind', default='request', choices=['incident', 'request', 'question', 'result'])
     c.add_argument('--priority', default='medium', choices=['low', 'medium', 'high', 'urgent'])
@@ -191,23 +185,23 @@ def main():
     c.set_defaults(func=create)
 
     s = sub.add_parser('status')
-    s.add_argument('--actor', required=True, choices=AGENTS)
+    s.add_argument('--actor', required=True)
     s.add_argument('handoff_id')
     s.set_defaults(func=status)
 
     l = sub.add_parser('list-open')
-    l.add_argument('--agent', required=True, choices=AGENTS)
+    l.add_argument('--agent', required=True)
     l.set_defaults(func=list_open)
 
     u = sub.add_parser('set-status')
-    u.add_argument('--actor', required=True, choices=AGENTS)
+    u.add_argument('--actor', required=True)
     u.add_argument('handoff_id')
     u.add_argument('status', choices=sorted(ALL_STATUSES))
     u.add_argument('--outcome', default='')
     u.set_defaults(func=set_status)
 
     a = sub.add_parser('archive')
-    a.add_argument('--actor', required=True, choices=AGENTS)
+    a.add_argument('--actor', required=True)
     a.add_argument('handoff_id')
     a.set_defaults(func=archive)
 

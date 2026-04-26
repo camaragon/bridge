@@ -16,7 +16,8 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.models import ACTIVE_STATUSES
-from bridge_core.policy import ALLOWED_ROUTES
+from bridge_core.policy import allowed_routes
+from bridge_core.runtime import discover_agents, env_key_for_agent
 from bridge_core.tooling import summarize_handoffs
 
 ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
@@ -192,8 +193,8 @@ def maybe_trigger_ack_reminder(
         elapsed = (now - iso_to_dt(last_reminded_at)).total_seconds() / 3600.0
         if elapsed < reminder_repeat_hours:
             return False, None
-    notify_url = runtime_config.get(f'BRIDGE_NOTIFY_URL_{record.recipient.upper()}', '').strip()
-    token = runtime_config.get(f'BRIDGE_TOKEN_{record.recipient.upper()}', '').strip()
+    notify_url = runtime_config.get(env_key_for_agent('BRIDGE_NOTIFY_URL_', record.recipient), '').strip()
+    token = runtime_config.get(env_key_for_agent('BRIDGE_TOKEN_', record.recipient), '').strip()
     if not notify_url:
         return False, f'reminder skipped for {record.handoff_id}: no notify endpoint configured for {record.recipient}'
     if not token:
@@ -312,13 +313,11 @@ def main():
         ROOT / 'bridge' / 'archive',
         ROOT / 'bridge' / 'audit',
         ROOT / 'scripts',
-        ROOT / 'bridge' / 'incoming' / 'hermes',
-        ROOT / 'bridge' / 'incoming' / 'jarvy',
-        ROOT / 'bridge' / 'incoming' / 'jordan',
-        ROOT / 'bridge' / 'outgoing' / 'hermes',
-        ROOT / 'bridge' / 'outgoing' / 'jarvy',
-        ROOT / 'bridge' / 'outgoing' / 'jordan',
     ]
+    agents = list(discover_agents(bridge_root=BRIDGE, config_values=runtime_config))
+    for agent in agents:
+        critical_dirs.append(ROOT / 'bridge' / 'incoming' / agent)
+        critical_dirs.append(ROOT / 'bridge' / 'outgoing' / agent)
     for directory in critical_dirs:
         checks.append(f'checked dir {directory}')
         if not directory.exists():
@@ -358,10 +357,11 @@ def main():
         warnings.append(api_message)
 
     summarized = list(summarize_handoffs(BRIDGE.glob('incoming/*/*.md')))
-    open_counts = {'hermes': 0, 'jarvy': 0, 'jordan': 0}
+    open_counts = {agent: 0 for agent in agents}
+    routes = allowed_routes()
     for item in summarized:
         record = item.record
-        if (record.sender, record.recipient) not in ALLOWED_ROUTES:
+        if routes and (record.sender, record.recipient) not in routes:
             warnings.append(f'disallowed route in {item.path}: {record.sender}->{record.recipient}')
         if record.recipient in open_counts and record.status in ACTIVE:
             open_counts[record.recipient] += 1
@@ -410,7 +410,8 @@ def main():
     if state_changed:
         save_patrol_state(state_path, reminder_state)
 
-    evidence.append(f"open counts hermes={open_counts['hermes']} jarvy={open_counts['jarvy']} jordan={open_counts['jordan']}")
+    open_count_summary = ' '.join(f'{agent}={open_counts[agent]}' for agent in agents) if agents else 'none'
+    evidence.append(f'open counts {open_count_summary}')
     evidence.append(f'markdown files checked={len(md_files)}')
     evidence.append(f'script files checked={len(py_files)}')
     evidence.append(

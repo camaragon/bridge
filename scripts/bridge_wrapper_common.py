@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from bridge_core.auth import load_agent_tokens
+from bridge_core.runtime import env_key_for_agent
 
 DEFAULT_ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
 DEFAULT_API_URL = 'http://127.0.0.1:8427'
@@ -47,7 +48,7 @@ def allow_cli_fallback(args: Namespace) -> bool:
 
 
 def load_token(agent: str) -> str:
-    env_key = f'BRIDGE_TOKEN_{agent.upper()}'
+    env_key = env_key_for_agent('BRIDGE_TOKEN_', agent)
     if os.environ.get(env_key):
         return os.environ[env_key]
     tokens = load_agent_tokens(token_config_path())

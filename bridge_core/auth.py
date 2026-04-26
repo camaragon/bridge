@@ -4,7 +4,7 @@ from pathlib import Path
 import hmac
 import os
 
-from .models import AGENTS
+from .runtime import normalize_agent_env_suffix, normalize_agent_id
 
 ENV_PREFIX = "BRIDGE_TOKEN_"
 
@@ -28,19 +28,19 @@ def _read_config_tokens(config_path: Path | str | None) -> dict[str, str]:
         key = key.strip()
         value = value.strip()
         if key.startswith(ENV_PREFIX):
-            agent = key[len(ENV_PREFIX) :].lower()
-            if agent in AGENTS and value:
+            agent = normalize_agent_env_suffix(key[len(ENV_PREFIX) :])
+            if value:
                 tokens[agent] = value
     return tokens
 
 
 def load_agent_tokens(config_path: Path | str | None = None) -> dict[str, str]:
     tokens = _read_config_tokens(config_path)
-    for agent in AGENTS:
-        env_key = f"{ENV_PREFIX}{agent.upper()}"
-        env_value = os.environ.get(env_key)
-        if env_value:
-            tokens[agent] = env_value
+    for env_key, env_value in os.environ.items():
+        if not env_key.startswith(ENV_PREFIX) or not env_value:
+            continue
+        agent = normalize_agent_env_suffix(env_key[len(ENV_PREFIX) :])
+        tokens[agent] = env_value
     return tokens
 
 
@@ -60,8 +60,9 @@ def resolve_agent_from_token(presented_token: str, config_path: Path | str | Non
 
 
 def require_agent_token(agent: str, presented_token: str, config_path: Path | str | None = None) -> None:
+    normalized_agent = normalize_agent_id(agent)
     tokens = load_agent_tokens(config_path)
-    expected = tokens.get(agent)
+    expected = tokens.get(normalized_agent)
     if not expected:
         raise AuthenticationError(f"no configured token for agent: {agent}")
     if not hmac.compare_digest(expected, presented_token):

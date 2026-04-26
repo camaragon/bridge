@@ -19,7 +19,7 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.auth import AuthenticationError, require_agent_token
-from bridge_core.models import AGENTS
+from bridge_core.runtime import env_key_for_agent, normalize_agent_id
 from bridge_wrapper_common import api_request, token_config_path
 
 
@@ -32,7 +32,7 @@ EVENT_COMMAND_TIMEOUT_SECONDS = 30.0
 
 
 def _event_command_env_var(agent: str) -> str:
-    return f'BRIDGE_NOTIFY_EVENT_COMMAND_{agent.upper()}'
+    return env_key_for_agent('BRIDGE_NOTIFY_EVENT_COMMAND_', agent)
 
 
 class IntakeNotifyServer(ThreadingHTTPServer):
@@ -252,7 +252,7 @@ def intake_once(agent: str, *, dry_run: bool = False) -> list[dict[str, Any]]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Poll the Bridge API and promptly acknowledge new handoffs for one agent.')
-    parser.add_argument('--agent', required=True, choices=AGENTS)
+    parser.add_argument('--agent', required=True)
     parser.add_argument('--poll-interval', type=float, default=DEFAULT_POLL_INTERVAL)
     parser.add_argument('--once', action='store_true', help='run one intake pass and exit')
     parser.add_argument('--dry-run', action='store_true', help='report open handoffs without acknowledging them')
@@ -286,6 +286,7 @@ def _run_poll_loop(agent: str, *, dry_run: bool, once: bool, poll_interval: floa
 
 def main() -> None:
     args = parse_args()
+    args.agent = normalize_agent_id(args.agent)
     poll_interval = max(args.poll_interval, 1.0)
     event_command = _resolve_event_command(args.agent, args.event_command)
     if args.listen:

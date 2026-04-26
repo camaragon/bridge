@@ -11,7 +11,8 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.models import ACTIVE_STATUSES, now_iso
-from bridge_core.policy import ALLOWED_ROUTES
+from bridge_core.policy import allowed_routes
+from bridge_core.runtime import discover_agents
 from bridge_core.tooling import LoadedHandoff, load_archive_entry, summarize_handoffs
 
 ROOT = Path(os.environ.get('BRIDGE_PROJECT_ROOT', str(SCRIPT_ROOT)))
@@ -147,7 +148,8 @@ def build_archive_index(archived):
 
 
 def main():
-    incoming = {agent: summarize_handoffs((BRIDGE / 'incoming' / agent).glob('*.md')) for agent in ['hermes', 'jarvy', 'jordan']}
+    agents = list(discover_agents(bridge_root=BRIDGE))
+    incoming = {agent: summarize_handoffs((BRIDGE / 'incoming' / agent).glob('*.md')) for agent in agents}
     archived = []
     for directory in sorted((BRIDGE / 'archive').glob('HND-*'), reverse=True):
         item = load_archive_entry(directory)
@@ -169,9 +171,10 @@ def main():
 
     route_violations = []
     stale = []
+    routes = allowed_routes()
     for bucket in incoming.values():
         for item in bucket:
-            if (item.record.sender, item.record.recipient) not in ALLOWED_ROUTES:
+            if routes and (item.record.sender, item.record.recipient) not in routes:
                 route_violations.append(item)
             if item.record.status in ACTIVE:
                 dt = parse_iso_datetime(item.record.updated_at)
@@ -194,6 +197,7 @@ def main():
         f'`{oldest_active.record.handoff_id or oldest_active.path.stem}` ({age_hours(oldest_active.record.updated_at)})'
         if oldest_active else 'none'
     )
+    agent_summary_lines = [f'- `{agent}` inbox active: **{open_counts.get(agent, 0)}**' for agent in agents] or ['- No agents discovered yet']
 
     lines = [
         '# Bridge Audit View',
@@ -202,9 +206,7 @@ def main():
         '',
         f'- Last refreshed: `{now_iso()}`',
         f'- Total active handoffs: **{total_open}**',
-        f'- Hermes inbox active: **{open_counts["hermes"]}**',
-        f'- Jarvy inbox active: **{open_counts["jarvy"]}**',
-        f'- Jordan inbox active: **{open_counts["jordan"]}**',
+        *agent_summary_lines,
         f'- Oldest active handoff: {oldest_summary}',
         f'- Blocked handoffs: **{len(blocked_items)}**',
         f'- Urgent/high priority active: **{len(urgent_high_items)}**',
@@ -236,9 +238,9 @@ def main():
     else:
         lines.extend(archive_bullet_for(item) for item in recent_closures)
 
-    for agent in ['hermes', 'jarvy', 'jordan']:
-        lines += ['', f'## {agent.capitalize()} Inbox']
-        bucket = [item for item in incoming[agent] if item.record.status in ACTIVE]
+    for agent in agents:
+        lines += ['', f'## {agent} Inbox']
+        bucket = [item for item in incoming.get(agent, []) if item.record.status in ACTIVE]
         if not bucket:
             lines.append('- none')
         else:
@@ -265,9 +267,8 @@ def main():
     lines += [
         '',
         '## Quick Commands',
-        '- `python3 ./scripts/bridge_hermes.py list-open`',
-        '- `python3 ./scripts/bridge_jordan.py create --recipient hermes ...`',
-        '- `python3 ./scripts/bridge_jarvy.py create --recipient hermes ...`',
+        '- `python3 ./scripts/bridge_agent.py --agent <agent-id> list-open`',
+        '- `python3 ./scripts/bridge_agent.py --agent <agent-id> create --recipient <recipient-agent> ...`',
         '- `python3 ./scripts/bridge_patrol.py --stuck-hours 24`  # built-in 0.5h active unresolved alert + reminder/escalation checks',
     ]
 

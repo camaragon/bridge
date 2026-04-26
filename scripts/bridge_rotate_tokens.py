@@ -9,11 +9,11 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from bridge_core.runtime import TOKEN_ENV_PREFIX, normalize_agent_env_suffix
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path(os.environ.get('BRIDGE_API_CONFIG', str(DEFAULT_ROOT / 'config' / 'bridge_api.env')))
 DEFAULT_SERVICE = 'bridge-api.service'
-AGENTS = ('hermes', 'jarvy', 'jordan')
-TOKEN_KEYS = {agent: f'BRIDGE_TOKEN_{agent.upper()}' for agent in AGENTS}
 
 
 def now_stamp() -> str:
@@ -26,13 +26,32 @@ def read_env_file(path: Path) -> list[str]:
     return path.read_text(encoding='utf-8').splitlines()
 
 
+def token_key(agent: str) -> str:
+    normalized = normalize_agent_env_suffix(agent)
+    return f"{TOKEN_ENV_PREFIX}{normalized.replace('-', '_').upper()}"
+
+
+def discover_agents(lines: list[str]) -> tuple[str, ...]:
+    agents: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith(TOKEN_ENV_PREFIX) or '=' not in stripped:
+            continue
+        key = stripped.split('=', 1)[0]
+        agent = normalize_agent_env_suffix(key[len(TOKEN_ENV_PREFIX):])
+        if agent not in agents:
+            agents.append(agent)
+    return tuple(agents)
+
+
 def rotate_lines(lines: list[str], agents: set[str]) -> list[str]:
     rotated = set()
     output: list[str] = []
+    normalized_agents = {normalize_agent_env_suffix(agent) for agent in agents}
     for line in lines:
         replaced = False
-        for agent in agents:
-            key = TOKEN_KEYS[agent]
+        for agent in normalized_agents:
+            key = token_key(agent)
             if line.startswith(f'{key}='):
                 output.append(f'{key}={secrets.token_urlsafe(32)}')
                 rotated.add(agent)
@@ -40,12 +59,12 @@ def rotate_lines(lines: list[str], agents: set[str]) -> list[str]:
                 break
         if not replaced:
             output.append(line)
-    missing = [agent for agent in agents if agent not in rotated]
+    missing = [agent for agent in sorted(normalized_agents) if agent not in rotated]
     if missing:
         if output and output[-1] != '':
             output.append('')
         for agent in missing:
-            output.append(f'{TOKEN_KEYS[agent]}={secrets.token_urlsafe(32)}')
+            output.append(f'{token_key(agent)}={secrets.token_urlsafe(32)}')
     if output and output[-1] != '':
         output.append('')
     return output
@@ -64,19 +83,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Rotate Bridge API tokens safely without echoing secret values')
     parser.add_argument('--config', default=str(DEFAULT_CONFIG))
     parser.add_argument('--service', default=DEFAULT_SERVICE)
-    parser.add_argument('--agents', nargs='+', choices=list(AGENTS) + ['all'], default=['all'])
+    parser.add_argument('--agents', nargs='+', default=['all'], help='agent ids to rotate, or all')
     parser.add_argument('--no-restart', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
 
     config = Path(args.config)
-    selected = set(AGENTS if 'all' in args.agents else args.agents)
     lines = read_env_file(config)
+    available_agents = discover_agents(lines)
+    selected = set(available_agents if 'all' in args.agents else [normalize_agent_env_suffix(agent) for agent in args.agents])
     new_lines = rotate_lines(lines, selected)
     backup = backup_path(config)
 
     if args.dry_run:
-        print(f'dry_run: yes')
+        print('dry_run: yes')
         print(f'config: {config}')
         print(f'backup_would_be: {backup}')
         print(f'agents: {", ".join(sorted(selected))}')

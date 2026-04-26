@@ -14,30 +14,19 @@ It gives you a bounded place to create, receive, track, and close agent-to-agent
 - supports read-only event consumers for surfacing lifecycle events into chat/UI adapters
 - includes patrol tooling for reminders and unresolved-handoff detection
 
-## Current model
+## Configuration model
 
-Bridge currently ships with three built-in agent IDs:
+Bridge ships with **no built-in agent IDs** and **no default route graph**.
 
-- `hermes`
-- `jarvy`
-- `jordan`
+You choose your own agent names. Examples in this README use placeholders like `agent-a` and `agent-b`, but those are only sample values.
 
-Default route policy allows:
+Route policy is optional:
 
-- `hermes -> jarvy`
-- `jarvy -> hermes`
-- `hermes -> jordan`
-- `jordan -> hermes`
+- if `BRIDGE_ALLOWED_ROUTES` is unset, Bridge allows any sender -> recipient pair
+- if `BRIDGE_ALLOWED_ROUTES` is set, Bridge only allows the configured pairs
+- API auth tokens are discovered from `BRIDGE_TOKEN_<AGENT_ID>` entries, so your deployed agent IDs come from config, not from the codebase
 
-Default route policy denies:
-
-- `jarvy -> jordan`
-- `jordan -> jarvy`
-
-If you want different agent names or routes, start with:
-
-- `bridge_core/models.py`
-- `bridge_core/policy.py`
+You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` to adopt your own ecosystem.
 
 ## Repository layout
 
@@ -79,8 +68,8 @@ This is the fastest way to see Bridge working.
 
 ```bash
 python3 scripts/bridge_cli.py create \
-  --sender hermes \
-  --recipient jarvy \
+  --sender agent-a \
+  --recipient agent-b \
   --issue-type task \
   --subject "Demo handoff" \
   --requested-action "Inspect the repo and report back" \
@@ -92,27 +81,27 @@ You should get JSON like:
 ```json
 {
   "handoff_id": "HND-20260426-000000-abcd",
-  "outbox": ".../bridge/outgoing/hermes/HND-...md",
-  "inbox": ".../bridge/incoming/jarvy/HND-...md"
+  "outbox": ".../bridge/outgoing/agent-a/HND-...md",
+  "inbox": ".../bridge/incoming/agent-b/HND-...md"
 }
 ```
 
 List open handoffs for the recipient:
 
 ```bash
-python3 scripts/bridge_cli.py list-open --agent jarvy
+python3 scripts/bridge_cli.py list-open --agent agent-b
 ```
 
 Mark it closed:
 
 ```bash
-python3 scripts/bridge_cli.py set-status --actor jarvy HND-... closed --outcome "Completed and reported back"
+python3 scripts/bridge_cli.py set-status --actor agent-b HND-... closed --outcome "Completed and reported back"
 ```
 
 Archive it:
 
 ```bash
-python3 scripts/bridge_cli.py archive --actor jarvy HND-...
+python3 scripts/bridge_cli.py archive --actor agent-b HND-...
 ```
 
 ## HTTP API quick start
@@ -127,9 +116,9 @@ cp config/bridge_api.example.env config/bridge_api.env
 
 Edit `config/bridge_api.env` and replace:
 
-- `BRIDGE_TOKEN_HERMES`
-- `BRIDGE_TOKEN_JARVY`
-- `BRIDGE_TOKEN_JORDAN`
+- `BRIDGE_TOKEN_AGENT_A`
+- `BRIDGE_TOKEN_AGENT_B`
+- `BRIDGE_TOKEN_AGENT_C`
 
 with real secret values.
 
@@ -158,8 +147,8 @@ Expected:
 ### 4) Use a wrapper
 
 ```bash
-python3 scripts/bridge_hermes.py create \
-  --recipient jarvy \
+python3 scripts/bridge_agent.py --agent agent-a create \
+  --recipient agent-b \
   --issue-type task \
   --subject "Wrapper demo" \
   --requested-action "Verify API-backed handoff creation" \
@@ -169,19 +158,19 @@ python3 scripts/bridge_hermes.py create \
 List open handoffs:
 
 ```bash
-python3 scripts/bridge_jarvy.py list-open
+python3 scripts/bridge_agent.py --agent agent-b list-open
 ```
 
 Acknowledge receipt:
 
 ```bash
-python3 scripts/bridge_jarvy.py ack HND-...
+python3 scripts/bridge_agent.py --agent agent-b ack HND-...
 ```
 
 Close with a resolution summary:
 
 ```bash
-python3 scripts/bridge_jarvy.py close HND-... --outcome "Verified and complete"
+python3 scripts/bridge_agent.py --agent agent-b close HND-... --outcome "Verified and complete"
 ```
 
 ## API endpoints
@@ -213,13 +202,13 @@ Bridge supports two layers of notification behavior:
 Run a recipient listener:
 
 ```bash
-python3 scripts/bridge_intake_watch.py --agent jarvy --listen --port 8522
+python3 scripts/bridge_intake_watch.py --agent agent-b --listen --port 8522
 ```
 
 Run a one-shot inbox check:
 
 ```bash
-python3 scripts/bridge_intake_watch.py --agent jarvy --once
+python3 scripts/bridge_intake_watch.py --agent agent-b --once
 ```
 
 ## Patrol and unresolved handoff detection
@@ -248,10 +237,10 @@ Main runtime variables:
 - `BRIDGE_API_CONFIG`
 - `BRIDGE_API_HOST`
 - `BRIDGE_API_PORT`
-- `BRIDGE_TOKEN_HERMES`
-- `BRIDGE_TOKEN_JARVY`
-- `BRIDGE_TOKEN_JORDAN`
-- `BRIDGE_NOTIFY_URL_HERMES`
+- `BRIDGE_TOKEN_AGENT_A`
+- `BRIDGE_TOKEN_AGENT_B`
+- `BRIDGE_TOKEN_AGENT_C`
+- `BRIDGE_NOTIFY_URL_AGENT_A`
 - `BRIDGE_NOTIFY_URL_JARVY`
 - `BRIDGE_NOTIFY_URL_JORDAN`
 - `BRIDGE_NOTIFY_EVENT_COMMAND_HERMES`

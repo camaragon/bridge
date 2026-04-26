@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import sys
-from argparse import Namespace
 
 import pytest
 
-import bridge_hermes
+import bridge_agent
 
 
-def test_hermes_wrapper_create_uses_api_and_attaches_agent_identity(monkeypatch, capsys):
+def test_generic_wrapper_create_uses_explicit_agent_identity(monkeypatch, capsys):
     captured = {}
 
     def fake_api_request(agent, method, path, *, payload=None):
@@ -19,8 +18,8 @@ def test_hermes_wrapper_create_uses_api_and_attaches_agent_identity(monkeypatch,
         captured['payload'] = payload
         return {
             'handoff_id': 'HND-TEST-001',
-            'sender': 'hermes',
-            'recipient': 'jordan',
+            'sender': 'agent-a',
+            'recipient': 'agent-b',
         }
 
     def fake_invoke(agent, args, *, api_call, cli_args):
@@ -28,15 +27,16 @@ def test_hermes_wrapper_create_uses_api_and_attaches_agent_identity(monkeypatch,
         captured['cli_args'] = cli_args
         print(json.dumps(api_call()))
 
-    monkeypatch.setattr(bridge_hermes, 'api_request', fake_api_request)
-    monkeypatch.setattr(bridge_hermes, 'invoke', fake_invoke)
+    monkeypatch.setattr(bridge_agent, 'api_request', fake_api_request)
+    monkeypatch.setattr(bridge_agent, 'invoke', fake_invoke)
     monkeypatch.setattr(
         sys,
         'argv',
         [
-            'bridge_hermes.py',
+            'bridge_agent.py',
+            '--agent', 'agent-a',
             'create',
-            '--recipient', 'jordan',
+            '--recipient', 'agent-b',
             '--issue-type', 'task',
             '--subject', 'API wrapper test',
             '--requested-action', 'Do the thing',
@@ -44,32 +44,33 @@ def test_hermes_wrapper_create_uses_api_and_attaches_agent_identity(monkeypatch,
         ],
     )
 
-    bridge_hermes.main()
+    bridge_agent.main()
     payload = json.loads(capsys.readouterr().out)
 
-    assert captured['agent'] == 'hermes'
-    assert captured['invoke_agent'] == 'hermes'
+    assert captured['agent'] == 'agent-a'
+    assert captured['invoke_agent'] == 'agent-a'
     assert captured['method'] == 'POST'
     assert captured['path'] == '/v1/handoffs'
     assert 'sender' not in captured['payload']
-    assert captured['payload']['recipient'] == 'jordan'
+    assert captured['payload']['recipient'] == 'agent-b'
     assert '--sender' in captured['cli_args']
-    assert captured['cli_args'][captured['cli_args'].index('--sender') + 1] == 'hermes'
+    assert captured['cli_args'][captured['cli_args'].index('--sender') + 1] == 'agent-a'
     assert payload['handoff_id'] == 'HND-TEST-001'
-    assert payload['outbox'].endswith('/outgoing/hermes/HND-TEST-001.md')
-    assert payload['inbox'].endswith('/incoming/jordan/HND-TEST-001.md')
+    assert payload['outbox'].endswith('/outgoing/agent-a/HND-TEST-001.md')
+    assert payload['inbox'].endswith('/incoming/agent-b/HND-TEST-001.md')
 
 
-def test_hermes_wrapper_refuses_cli_fallback_unless_enabled(monkeypatch):
-    monkeypatch.setattr(bridge_hermes, 'api_request', lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionError('down')))
+def test_generic_wrapper_refuses_cli_fallback_unless_enabled(monkeypatch):
+    monkeypatch.setattr(bridge_agent, 'api_request', lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionError('down')))
     monkeypatch.setattr(
         sys,
         'argv',
         [
-            'bridge_hermes.py',
+            'bridge_agent.py',
+            '--agent', 'agent-a',
             'list-open',
         ],
     )
 
     with pytest.raises(SystemExit, match='bridge API unavailable'):
-        bridge_hermes.main()
+        bridge_agent.main()

@@ -22,9 +22,9 @@ def api_server(tmp_path: Path):
     config_path.write_text(
         "\n".join(
             [
-                "BRIDGE_TOKEN_HERMES=token-hermes",
-                "BRIDGE_TOKEN_JARVY=token-jarvy",
-                "BRIDGE_TOKEN_JORDAN=token-jordan",
+                "BRIDGE_TOKEN_AGENT_A=token-agent-a",
+                "BRIDGE_TOKEN_AGENT_B=token-agent-b",
+                "BRIDGE_TOKEN_AGENT_C=token-agent-c",
                 "",
             ]
         ),
@@ -95,10 +95,10 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-hermes",
+        token="token-agent-a",
         body={
-            "sender": "jordan",
-            "recipient": "jordan",
+            "sender": "agent-c",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "API flow",
             "requested_action": "Handle the request.",
@@ -108,31 +108,31 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
     )
 
     assert status == 201
-    assert created["sender"] == "hermes"
-    assert created["recipient"] == "jordan"
+    assert created["sender"] == "agent-a"
+    assert created["recipient"] == "agent-c"
     handoff_id = str(created["handoff_id"])
 
-    status, hermes_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-hermes")
+    status, agent_a_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-agent-a")
     assert status == 200
-    assert [item["handoff_id"] for item in hermes_list["items"]] == [handoff_id]
+    assert [item["handoff_id"] for item in agent_a_list["items"]] == [handoff_id]
 
-    status, jordan_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-jordan")
+    status, agent_c_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-agent-c")
     assert status == 200
-    assert [item["handoff_id"] for item in jordan_list["items"]] == [handoff_id]
+    assert [item["handoff_id"] for item in agent_c_list["items"]] == [handoff_id]
 
-    status, jarvy_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-jarvy")
+    status, agent_b_list = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-agent-b")
     assert status == 200
-    assert jarvy_list["items"] == []
+    assert agent_b_list["items"] == []
 
-    status, hermes_get = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-hermes")
+    status, agent_a_get = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-a")
     assert status == 200
-    assert hermes_get["handoff_id"] == handoff_id
+    assert agent_a_get["handoff_id"] == handoff_id
 
-    status, forbidden = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-jarvy")
+    status, forbidden = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-b")
     assert status == 403
     assert forbidden["error"] == "forbidden"
 
-    status, acked = _request(api_server["base_url"], "POST", f"/v1/handoffs/{handoff_id}/ack", token="token-jordan")
+    status, acked = _request(api_server["base_url"], "POST", f"/v1/handoffs/{handoff_id}/ack", token="token-agent-c")
     assert status == 200
     assert acked["status"] == "acknowledged"
     assert acked["acknowledgment_source"] == "manual"
@@ -142,7 +142,7 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/block",
-        token="token-jordan",
+        token="token-agent-c",
         body={"outcome": "Waiting on a dependency."},
     )
     assert status == 200
@@ -153,7 +153,7 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/status",
-        token="token-jordan",
+        token="token-agent-c",
         body={"status": "in_progress"},
     )
     assert status == 200
@@ -163,14 +163,14 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/close",
-        token="token-jordan",
+        token="token-agent-c",
         body={"outcome": "Completed safely."},
     )
     assert status == 200
     assert closed["status"] == "closed"
     assert closed["resolution_summary"] == "Completed safely."
 
-    status, active_items = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-jordan")
+    status, active_items = _request(api_server["base_url"], "GET", "/v1/handoffs", token="token-agent-c")
     assert status == 200
     assert active_items["items"] == []
 
@@ -178,13 +178,13 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
         api_server["base_url"],
         "GET",
         "/v1/handoffs",
-        token="token-jordan",
+        token="token-agent-c",
         query={"active_only": "false"},
     )
     assert status == 200
     assert [item["status"] for item in all_items["items"]] == ["closed"]
 
-    status, archived = _request(api_server["base_url"], "POST", f"/v1/handoffs/{handoff_id}/archive", token="token-jordan")
+    status, archived = _request(api_server["base_url"], "POST", f"/v1/handoffs/{handoff_id}/archive", token="token-agent-c")
     assert status == 200
     assert archived["status"] == "archived"
     assert archived["archive_path"].endswith(f"/archive/{handoff_id}")
@@ -196,14 +196,15 @@ def test_create_list_get_and_lifecycle_flow(api_server) -> None:
     assert "## Outcome\nCompleted safely." in archived_body
 
 
-def test_create_rejects_disallowed_route(api_server) -> None:
+def test_create_rejects_disallowed_route(api_server, monkeypatch) -> None:
+    monkeypatch.setenv("BRIDGE_ALLOWED_ROUTES", "agent-a:agent-c,agent-c:agent-a")
     status, payload = _request(
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-jarvy",
+        token="token-agent-b",
         body={
-            "recipient": "jordan",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "Denied route",
             "requested_action": "Nope",
@@ -225,27 +226,27 @@ def test_bad_auth_is_rejected(api_server) -> None:
         api_server["base_url"],
         "GET",
         "/v1/handoffs",
-        extra_headers={"X-Bridge-Token": "token-jordan"},
+        extra_headers={"X-Bridge-Token": "token-agent-c"},
     )
     assert status == 200
-    assert payload["actor"] == "jordan"
+    assert payload["actor"] == "agent-c"
 
 
 def test_create_triggers_immediate_notify_when_recipient_endpoint_is_configured(api_server, monkeypatch) -> None:
     monkeypatch.setenv("BRIDGE_WRAPPER_API_URL", api_server["base_url"])
     monkeypatch.setenv("BRIDGE_API_CONFIG", str(api_server["bridge_root"].parent / "config" / "bridge_api.env"))
-    notify_server = bridge_intake_watch.build_notify_server(agent="jordan", host="127.0.0.1", port=0)
+    notify_server = bridge_intake_watch.build_notify_server(agent="agent-c", host="127.0.0.1", port=0)
     thread = threading.Thread(target=notify_server.serve_forever, daemon=True)
     thread.start()
-    monkeypatch.setenv("BRIDGE_NOTIFY_URL_JORDAN", f"http://127.0.0.1:{notify_server.server_port}/notify")
+    monkeypatch.setenv("BRIDGE_NOTIFY_URL_AGENT_C", f"http://127.0.0.1:{notify_server.server_port}/notify")
     try:
         status, created = _request(
             api_server["base_url"],
             "POST",
             "/v1/handoffs",
-            token="token-hermes",
+            token="token-agent-a",
             body={
-                "recipient": "jordan",
+                "recipient": "agent-c",
                 "issue_type": "task",
                 "subject": "Push me now",
                 "requested_action": "Ack immediately.",
@@ -255,7 +256,7 @@ def test_create_triggers_immediate_notify_when_recipient_endpoint_is_configured(
         assert status == 201
         handoff_id = str(created["handoff_id"])
 
-        status, handoff = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-jordan")
+        status, handoff = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-c")
         assert status == 200
         assert handoff["status"] == "acknowledged"
         assert handoff["acknowledgment_source"] == "auto"
@@ -267,15 +268,15 @@ def test_create_triggers_immediate_notify_when_recipient_endpoint_is_configured(
 
 
 def test_create_keeps_open_handoff_when_immediate_notify_fails(api_server, monkeypatch) -> None:
-    monkeypatch.setenv("BRIDGE_NOTIFY_URL_JORDAN", "http://127.0.0.1:1/notify")
+    monkeypatch.setenv("BRIDGE_NOTIFY_URL_AGENT_C", "http://127.0.0.1:1/notify")
 
     status, created = _request(
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-hermes",
+        token="token-agent-a",
         body={
-            "recipient": "jordan",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "Fallback remains",
             "requested_action": "Polling backup should still work.",
@@ -286,7 +287,7 @@ def test_create_keeps_open_handoff_when_immediate_notify_fails(api_server, monke
     assert status == 201
     handoff_id = str(created["handoff_id"])
 
-    status, handoff = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-jordan")
+    status, handoff = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-c")
     assert status == 200
     assert handoff["status"] == "open"
 
@@ -313,15 +314,15 @@ def test_close_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
         return _FakeResponse()
 
     monkeypatch.setattr(bridge_api_server, "urlopen", _fake_urlopen)
-    monkeypatch.setenv("BRIDGE_NOTIFY_URL_HERMES", "http://notify.example/hermes")
+    monkeypatch.setenv("BRIDGE_NOTIFY_URL_AGENT_A", "http://notify.example/agent-a")
 
     status, created = _request(
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-hermes",
+        token="token-agent-a",
         body={
-            "recipient": "jordan",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "Close push",
             "requested_action": "Notify sender on close.",
@@ -336,7 +337,7 @@ def test_close_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/close",
-        token="token-jordan",
+        token="token-agent-c",
         body={"outcome": "Completed safely."},
     )
 
@@ -344,15 +345,15 @@ def test_close_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
     assert closed["status"] == "closed"
     assert len(captured_requests) == 1
     request = captured_requests[0]
-    assert request["url"] == "http://notify.example/hermes"
-    assert request["authorization"] == "Bearer token-hermes"
+    assert request["url"] == "http://notify.example/agent-a"
+    assert request["authorization"] == "Bearer token-agent-a"
     assert request["timeout"] == bridge_api_server.DEFAULT_NOTIFY_TIMEOUT_SECONDS
     assert request["body"] == {
         "trigger": "handoff_closed",
         "handoff_id": handoff_id,
-        "sender": "hermes",
-        "recipient": "jordan",
-        "actor": "jordan",
+        "sender": "agent-a",
+        "recipient": "agent-c",
+        "actor": "agent-c",
         "status": "closed",
         "subject": "Close push",
         "resolution_summary": "Completed safely.",
@@ -381,15 +382,15 @@ def test_block_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
         return _FakeResponse()
 
     monkeypatch.setattr(bridge_api_server, "urlopen", _fake_urlopen)
-    monkeypatch.setenv("BRIDGE_NOTIFY_URL_HERMES", "http://notify.example/hermes")
+    monkeypatch.setenv("BRIDGE_NOTIFY_URL_AGENT_A", "http://notify.example/agent-a")
 
     status, created = _request(
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-hermes",
+        token="token-agent-a",
         body={
-            "recipient": "jordan",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "Block push",
             "requested_action": "Notify sender on block.",
@@ -404,7 +405,7 @@ def test_block_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/block",
-        token="token-jordan",
+        token="token-agent-c",
         body={"outcome": "Waiting on dependency."},
     )
 
@@ -412,15 +413,15 @@ def test_block_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -
     assert blocked["status"] == "blocked"
     assert len(captured_requests) == 1
     request = captured_requests[0]
-    assert request["url"] == "http://notify.example/hermes"
-    assert request["authorization"] == "Bearer token-hermes"
+    assert request["url"] == "http://notify.example/agent-a"
+    assert request["authorization"] == "Bearer token-agent-a"
     assert request["timeout"] == bridge_api_server.DEFAULT_NOTIFY_TIMEOUT_SECONDS
     assert request["body"] == {
         "trigger": "handoff_blocked",
         "handoff_id": handoff_id,
-        "sender": "hermes",
-        "recipient": "jordan",
-        "actor": "jordan",
+        "sender": "agent-a",
+        "recipient": "agent-c",
+        "actor": "agent-c",
         "status": "blocked",
         "subject": "Block push",
         "resolution_summary": "Waiting on dependency.",
@@ -432,15 +433,15 @@ def test_close_keeps_status_update_when_sender_notify_fails(api_server, monkeypa
         raise OSError("notify down")
 
     monkeypatch.setattr(bridge_api_server, "urlopen", _failing_urlopen)
-    monkeypatch.setenv("BRIDGE_NOTIFY_URL_HERMES", "http://notify.example/hermes")
+    monkeypatch.setenv("BRIDGE_NOTIFY_URL_AGENT_A", "http://notify.example/agent-a")
 
     status, created = _request(
         api_server["base_url"],
         "POST",
         "/v1/handoffs",
-        token="token-hermes",
+        token="token-agent-a",
         body={
-            "recipient": "jordan",
+            "recipient": "agent-c",
             "issue_type": "task",
             "subject": "Close fallback",
             "requested_action": "Do not fail close when notify fails.",
@@ -454,7 +455,7 @@ def test_close_keeps_status_update_when_sender_notify_fails(api_server, monkeypa
         api_server["base_url"],
         "POST",
         f"/v1/handoffs/{handoff_id}/close",
-        token="token-jordan",
+        token="token-agent-c",
         body={"outcome": "Completed despite notify failure."},
     )
 
@@ -462,7 +463,7 @@ def test_close_keeps_status_update_when_sender_notify_fails(api_server, monkeypa
     assert closed["status"] == "closed"
     assert closed["resolution_summary"] == "Completed despite notify failure."
 
-    status, fetched = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-hermes")
+    status, fetched = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-a")
     assert status == 200
     assert fetched["status"] == "closed"
     assert fetched["resolution_summary"] == "Completed despite notify failure."

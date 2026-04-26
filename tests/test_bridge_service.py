@@ -23,8 +23,8 @@ def test_create_handoff_writes_dual_queue_files_and_defaults(tmp_path: Path) -> 
 
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="Need follow-up",
             requested_action="Handle it",
@@ -33,8 +33,8 @@ def test_create_handoff_writes_dual_queue_files_and_defaults(tmp_path: Path) -> 
         )
     )
 
-    outgoing = bridge / "outgoing" / "hermes" / f"{handoff.handoff_id}.md"
-    incoming = bridge / "incoming" / "jordan" / f"{handoff.handoff_id}.md"
+    outgoing = bridge / "outgoing" / "agent-a" / f"{handoff.handoff_id}.md"
+    incoming = bridge / "incoming" / "agent-c" / f"{handoff.handoff_id}.md"
     assert outgoing.exists()
     assert incoming.exists()
 
@@ -56,8 +56,8 @@ def test_create_handoff_rejects_invalid_domain_values(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid handoff_kind"):
         service.create_handoff(
             CreateHandoffInput(
-                sender="hermes",
-                recipient="jordan",
+                sender="agent-a",
+                recipient="agent-c",
                 issue_type="task",
                 subject="Need follow-up",
                 requested_action="Handle it",
@@ -69,8 +69,8 @@ def test_create_handoff_rejects_invalid_domain_values(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid priority"):
         service.create_handoff(
             CreateHandoffInput(
-                sender="hermes",
-                recipient="jordan",
+                sender="agent-a",
+                recipient="agent-c",
                 issue_type="task",
                 subject="Need follow-up",
                 requested_action="Handle it",
@@ -82,8 +82,8 @@ def test_create_handoff_rejects_invalid_domain_values(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid risk_level"):
         service.create_handoff(
             CreateHandoffInput(
-                sender="hermes",
-                recipient="jordan",
+                sender="agent-a",
+                recipient="agent-c",
                 issue_type="task",
                 subject="Need follow-up",
                 requested_action="Handle it",
@@ -98,8 +98,8 @@ def test_create_handoff_sanitizes_frontmatter_injected_values(tmp_path: Path) ->
 
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="hello\nstatus: archived",
             requested_action="Handle it",
@@ -108,7 +108,7 @@ def test_create_handoff_sanitizes_frontmatter_injected_values(tmp_path: Path) ->
         )
     )
 
-    outgoing = bridge / "outgoing" / "hermes" / f"{handoff.handoff_id}.md"
+    outgoing = bridge / "outgoing" / "agent-a" / f"{handoff.handoff_id}.md"
     data, _body = parse_frontmatter(outgoing.read_text(encoding="utf-8"))
     assert data["status"] == "open"
     assert data["subject"] == "hello status: archived"
@@ -120,18 +120,18 @@ def test_list_handoffs_returns_all_or_only_active(tmp_path: Path) -> None:
 
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="Need follow-up",
             requested_action="Handle it",
             minimal_context="Only what is needed",
         )
     )
-    service.set_status(handoff.handoff_id, actor="jordan", status="closed", outcome="Done.")
+    service.set_status(handoff.handoff_id, actor="agent-c", status="closed", outcome="Done.")
 
-    assert service.list_handoffs("jordan") == []
-    all_items = service.list_handoffs("jordan", active_only=False)
+    assert service.list_handoffs("agent-c") == []
+    all_items = service.list_handoffs("agent-c", active_only=False)
     assert len(all_items) == 1
     assert all_items[0].handoff_id == handoff.handoff_id
     assert all_items[0].status == "closed"
@@ -141,8 +141,8 @@ def test_set_status_updates_both_copies_and_archives_preserving_divergent_copy(t
     service, bridge = _build_service(tmp_path)
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="Lifecycle",
             requested_action="Handle it",
@@ -150,23 +150,23 @@ def test_set_status_updates_both_copies_and_archives_preserving_divergent_copy(t
         )
     )
 
-    service.set_status(handoff.handoff_id, actor="jordan", status="acked", acknowledgment_source="auto")
+    service.set_status(handoff.handoff_id, actor="agent-c", status="acked", acknowledgment_source="auto")
     closed = service.set_status(
         handoff.handoff_id,
-        actor="jordan",
+        actor="agent-c",
         status="closed",
         outcome="Finished safely.",
     )
     assert closed.status == "closed"
     assert closed.resolution_summary == "Finished safely."
 
-    outgoing = bridge / "outgoing" / "hermes" / f"{handoff.handoff_id}.md"
-    incoming = bridge / "incoming" / "jordan" / f"{handoff.handoff_id}.md"
+    outgoing = bridge / "outgoing" / "agent-a" / f"{handoff.handoff_id}.md"
+    incoming = bridge / "incoming" / "agent-c" / f"{handoff.handoff_id}.md"
     incoming.write_text(incoming.read_text(encoding="utf-8") + "\n<!-- recipient note -->\n", encoding="utf-8")
 
-    archive_dir = service.archive_handoff(handoff.handoff_id, actor="jordan")
+    archive_dir = service.archive_handoff(handoff.handoff_id, actor="agent-c")
     canonical = archive_dir / f"{handoff.handoff_id}.md"
-    alternate = archive_dir / f"{handoff.handoff_id}.incoming.jordan.md"
+    alternate = archive_dir / f"{handoff.handoff_id}.incoming.agent-c.md"
 
     assert archive_dir.exists()
     assert canonical.exists()
@@ -193,8 +193,8 @@ def test_set_status_rejects_unknown_acknowledgment_source(tmp_path: Path) -> Non
     service, _bridge = _build_service(tmp_path)
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="Bad ack source",
             requested_action="Handle it",
@@ -203,15 +203,15 @@ def test_set_status_rejects_unknown_acknowledgment_source(tmp_path: Path) -> Non
     )
 
     with pytest.raises(StatusPolicyError, match="acknowledgment_source must be auto or manual"):
-        service.set_status(handoff.handoff_id, actor="jordan", status="acknowledged", acknowledgment_source="bot")
+        service.set_status(handoff.handoff_id, actor="agent-c", status="acknowledged", acknowledgment_source="bot")
 
 
 def test_set_status_uses_one_timestamp_and_preserves_sections_after_outcome(tmp_path: Path) -> None:
     service, bridge = _build_service(tmp_path)
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jordan",
+            sender="agent-a",
+            recipient="agent-c",
             issue_type="task",
             subject="Outcome preservation",
             requested_action="Handle it",
@@ -219,14 +219,14 @@ def test_set_status_uses_one_timestamp_and_preserves_sections_after_outcome(tmp_
         )
     )
 
-    incoming = bridge / "incoming" / "jordan" / f"{handoff.handoff_id}.md"
+    incoming = bridge / "incoming" / "agent-c" / f"{handoff.handoff_id}.md"
     data, body = parse_frontmatter(incoming.read_text(encoding="utf-8"))
     body = body.rstrip() + "\n## Notes\nKeep this section.\n"
     incoming.write_text("---\n" + "\n".join(f"{k}: {v}" if not isinstance(v, list) else f"{k}:\n" + "\n".join(f"  - {item}" for item in v) for k, v in data.items()) + "\n---\n\n" + body.lstrip("\n"), encoding="utf-8")
 
-    service.set_status(handoff.handoff_id, actor="jordan", status="closed", outcome="Finished safely.")
+    service.set_status(handoff.handoff_id, actor="agent-c", status="closed", outcome="Finished safely.")
 
-    outgoing = bridge / "outgoing" / "hermes" / f"{handoff.handoff_id}.md"
+    outgoing = bridge / "outgoing" / "agent-a" / f"{handoff.handoff_id}.md"
     outgoing_data, outgoing_body = parse_frontmatter(outgoing.read_text(encoding="utf-8"))
     incoming_data, incoming_body = parse_frontmatter(incoming.read_text(encoding="utf-8"))
     assert outgoing_data["updated_at"] == incoming_data["updated_at"]
@@ -239,8 +239,8 @@ def test_archive_requires_closed_status(tmp_path: Path) -> None:
     service, _bridge = _build_service(tmp_path)
     handoff = service.create_handoff(
         CreateHandoffInput(
-            sender="hermes",
-            recipient="jarvy",
+            sender="agent-a",
+            recipient="agent-b",
             issue_type="task",
             subject="Still open",
             requested_action="Handle it",
@@ -249,4 +249,4 @@ def test_archive_requires_closed_status(tmp_path: Path) -> None:
     )
 
     with pytest.raises(StatusPolicyError, match="only closed handoffs can be archived"):
-        service.archive_handoff(handoff.handoff_id, actor="jarvy")
+        service.archive_handoff(handoff.handoff_id, actor="agent-b")

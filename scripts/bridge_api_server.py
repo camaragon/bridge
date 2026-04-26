@@ -23,6 +23,7 @@ from bridge_core.frontmatter import parse_frontmatter
 from bridge_core.models import CreateHandoffInput, DEFAULT_RESPONSE_FORMAT, HandoffRecord
 from bridge_core.policy import AccessPolicyError, BridgePolicyError, RoutePolicyError, StatusPolicyError, is_active_status, require_actor_access
 from bridge_core.repository import HandoffNotFoundError
+from bridge_core.runtime import env_key_for_agent
 from bridge_core.service import BridgeService
 
 DEFAULT_ROOT = Path(os.environ.get("BRIDGE_PROJECT_ROOT", str(SCRIPT_ROOT)))
@@ -328,7 +329,7 @@ def _record_from_path(path: Path) -> HandoffRecord:
 
 
 def _notify_agent(context: ApiContext, *, target_agent: str, payload: dict[str, Any]) -> None:
-    notify_url = os.environ.get(f"BRIDGE_NOTIFY_URL_{target_agent.upper()}", "").strip()
+    notify_url = os.environ.get(env_key_for_agent("BRIDGE_NOTIFY_URL_", target_agent), "").strip()
     if not notify_url:
         return
     token = load_agent_tokens(context.config_path).get(target_agent, "")

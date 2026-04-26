@@ -21,9 +21,9 @@ def api_server(tmp_path: Path):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         '\n'.join([
-            'BRIDGE_TOKEN_HERMES=token-hermes',
-            'BRIDGE_TOKEN_JARVY=token-jarvy',
-            'BRIDGE_TOKEN_JORDAN=token-jordan',
+            'BRIDGE_TOKEN_AGENT_A=token-agent-a',
+            'BRIDGE_TOKEN_AGENT_B=token-agent-b',
+            'BRIDGE_TOKEN_AGENT_C=token-agent-c',
             '',
         ]),
         encoding='utf-8',
@@ -107,9 +107,9 @@ def test_intake_once_acknowledges_open_handoff(api_server, monkeypatch) -> None:
         api_server['base_url'],
         'POST',
         '/v1/handoffs',
-        token='token-hermes',
+        token='token-agent-a',
         body={
-            'recipient': 'jordan',
+            'recipient': 'agent-c',
             'issue_type': 'task',
             'subject': 'Needs prompt ack',
             'requested_action': 'Acknowledge receipt.',
@@ -119,11 +119,11 @@ def test_intake_once_acknowledges_open_handoff(api_server, monkeypatch) -> None:
     assert status == 201
     handoff_id = str(created['handoff_id'])
 
-    actions = bridge_intake_watch.intake_once('jordan')
+    actions = bridge_intake_watch.intake_once('agent-c')
 
     assert actions == [
         {
-            'agent': 'jordan',
+            'agent': 'agent-c',
             'handoff_id': handoff_id,
             'status': 'acknowledged',
             'ack_source': 'auto',
@@ -132,7 +132,7 @@ def test_intake_once_acknowledges_open_handoff(api_server, monkeypatch) -> None:
         }
     ]
 
-    status, payload = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-jordan')
+    status, payload = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-c')
     assert status == 200
     assert payload['status'] == 'acknowledged'
     assert payload['acknowledgment_source'] == 'auto'
@@ -146,9 +146,9 @@ def test_intake_once_ignores_non_open_handoffs(api_server, monkeypatch) -> None:
         api_server['base_url'],
         'POST',
         '/v1/handoffs',
-        token='token-hermes',
+        token='token-agent-a',
         body={
-            'recipient': 'jordan',
+            'recipient': 'agent-c',
             'issue_type': 'task',
             'subject': 'Already acked',
             'requested_action': 'Nothing to do.',
@@ -158,11 +158,11 @@ def test_intake_once_ignores_non_open_handoffs(api_server, monkeypatch) -> None:
     assert status == 201
     handoff_id = str(created['handoff_id'])
 
-    status, acked = _request(api_server['base_url'], 'POST', f'/v1/handoffs/{handoff_id}/ack', token='token-jordan', body={})
+    status, acked = _request(api_server['base_url'], 'POST', f'/v1/handoffs/{handoff_id}/ack', token='token-agent-c', body={})
     assert status == 200
     assert acked['status'] == 'acknowledged'
 
-    actions = bridge_intake_watch.intake_once('jordan')
+    actions = bridge_intake_watch.intake_once('agent-c')
 
     assert actions == []
 
@@ -174,9 +174,9 @@ def test_intake_once_dry_run_reports_without_mutating(api_server, monkeypatch) -
         api_server['base_url'],
         'POST',
         '/v1/handoffs',
-        token='token-hermes',
+        token='token-agent-a',
         body={
-            'recipient': 'jordan',
+            'recipient': 'agent-c',
             'issue_type': 'task',
             'subject': 'Dry run only',
             'requested_action': 'Do not mutate.',
@@ -186,11 +186,11 @@ def test_intake_once_dry_run_reports_without_mutating(api_server, monkeypatch) -
     assert status == 201
     handoff_id = str(created['handoff_id'])
 
-    actions = bridge_intake_watch.intake_once('jordan', dry_run=True)
+    actions = bridge_intake_watch.intake_once('agent-c', dry_run=True)
 
     assert actions == [
         {
-            'agent': 'jordan',
+            'agent': 'agent-c',
             'handoff_id': handoff_id,
             'status': 'open',
             'subject': 'Dry run only',
@@ -198,14 +198,14 @@ def test_intake_once_dry_run_reports_without_mutating(api_server, monkeypatch) -
         }
     ]
 
-    status, payload = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-jordan')
+    status, payload = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-c')
     assert status == 200
     assert payload['status'] == 'open'
 
 
 def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> None:
     _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
-    notify_server = bridge_intake_watch.build_notify_server(agent='jordan', host='127.0.0.1', port=0)
+    notify_server = bridge_intake_watch.build_notify_server(agent='agent-c', host='127.0.0.1', port=0)
     thread = threading.Thread(target=notify_server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -213,9 +213,9 @@ def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> Non
             api_server['base_url'],
             'POST',
             '/v1/handoffs',
-            token='token-hermes',
+            token='token-agent-a',
             body={
-                'recipient': 'jordan',
+                'recipient': 'agent-c',
                 'issue_type': 'task',
                 'subject': 'Notify now',
                 'requested_action': 'Immediate acknowledge.',
@@ -226,14 +226,14 @@ def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> Non
         handoff_id = str(created['handoff_id'])
 
         notify_url = f'http://127.0.0.1:{notify_server.server_port}/notify'
-        status, payload = _notify_request(notify_url, token='token-jordan')
+        status, payload = _notify_request(notify_url, token='token-agent-c')
 
         assert status == 200
-        assert payload['agent'] == 'jordan'
+        assert payload['agent'] == 'agent-c'
         assert payload['trigger'] == 'notify'
         assert payload['actions'] == [
             {
-                'agent': 'jordan',
+                'agent': 'agent-c',
                 'handoff_id': handoff_id,
                 'status': 'acknowledged',
                 'ack_source': 'auto',
@@ -242,7 +242,7 @@ def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> Non
             }
         ]
 
-        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-jordan')
+        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-c')
         assert status == 200
         assert handoff['status'] == 'acknowledged'
         assert handoff['acknowledgment_source'] == 'auto'
@@ -254,7 +254,7 @@ def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> Non
 
 def test_notify_server_rejects_wrong_token(api_server, monkeypatch) -> None:
     _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
-    notify_server = bridge_intake_watch.build_notify_server(agent='jordan', host='127.0.0.1', port=0)
+    notify_server = bridge_intake_watch.build_notify_server(agent='agent-c', host='127.0.0.1', port=0)
     thread = threading.Thread(target=notify_server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -262,9 +262,9 @@ def test_notify_server_rejects_wrong_token(api_server, monkeypatch) -> None:
             api_server['base_url'],
             'POST',
             '/v1/handoffs',
-            token='token-hermes',
+            token='token-agent-a',
             body={
-                'recipient': 'jordan',
+                'recipient': 'agent-c',
                 'issue_type': 'task',
                 'subject': 'Bad token',
                 'requested_action': 'Should stay open.',
@@ -280,7 +280,7 @@ def test_notify_server_rejects_wrong_token(api_server, monkeypatch) -> None:
         assert status == 401
         assert payload['error'] == 'unauthorized'
 
-        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-jordan')
+        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-c')
         assert status == 200
         assert handoff['status'] == 'open'
     finally:
@@ -291,7 +291,7 @@ def test_notify_server_rejects_wrong_token(api_server, monkeypatch) -> None:
 
 def test_notify_server_exposes_lifecycle_events_without_mutating_handoff(api_server, monkeypatch) -> None:
     _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
-    notify_server = bridge_intake_watch.build_notify_server(agent='hermes', host='127.0.0.1', port=0)
+    notify_server = bridge_intake_watch.build_notify_server(agent='agent-a', host='127.0.0.1', port=0)
     thread = threading.Thread(target=notify_server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -299,9 +299,9 @@ def test_notify_server_exposes_lifecycle_events_without_mutating_handoff(api_ser
             api_server['base_url'],
             'POST',
             '/v1/handoffs',
-            token='token-hermes',
+            token='token-agent-a',
             body={
-                'recipient': 'jordan',
+                'recipient': 'agent-c',
                 'issue_type': 'task',
                 'subject': 'Lifecycle echo',
                 'requested_action': 'Return lifecycle event immediately.',
@@ -315,22 +315,22 @@ def test_notify_server_exposes_lifecycle_events_without_mutating_handoff(api_ser
         event = {
             'trigger': 'handoff_closed',
             'handoff_id': handoff_id,
-            'sender': 'hermes',
-            'recipient': 'jordan',
-            'actor': 'jordan',
+            'sender': 'agent-a',
+            'recipient': 'agent-c',
+            'actor': 'agent-c',
             'status': 'closed',
             'subject': 'Lifecycle echo',
             'resolution_summary': 'Done now.',
         }
-        status, payload = _notify_request(notify_url, token='token-hermes', body=event)
+        status, payload = _notify_request(notify_url, token='token-agent-a', body=event)
 
         assert status == 200
-        assert payload['agent'] == 'hermes'
+        assert payload['agent'] == 'agent-a'
         assert payload['trigger'] == 'notify'
         assert payload['event'] == event
         assert payload['actions'] == []
 
-        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-hermes')
+        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-a')
         assert status == 200
         assert handoff['status'] == 'open'
     finally:
@@ -348,7 +348,7 @@ def test_notify_server_runs_lifecycle_event_command(api_server, monkeypatch, tmp
         encoding='utf-8',
     )
     notify_server = bridge_intake_watch.build_notify_server(
-        agent='hermes',
+        agent='agent-a',
         host='127.0.0.1',
         port=0,
         event_command=f'{sys.executable} {script_path} {capture_path}',
@@ -360,9 +360,9 @@ def test_notify_server_runs_lifecycle_event_command(api_server, monkeypatch, tmp
             api_server['base_url'],
             'POST',
             '/v1/handoffs',
-            token='token-hermes',
+            token='token-agent-a',
             body={
-                'recipient': 'jordan',
+                'recipient': 'agent-c',
                 'issue_type': 'task',
                 'subject': 'Lifecycle forward',
                 'requested_action': 'Forward lifecycle payload to command.',
@@ -376,19 +376,19 @@ def test_notify_server_runs_lifecycle_event_command(api_server, monkeypatch, tmp
         event = {
             'trigger': 'handoff_closed',
             'handoff_id': handoff_id,
-            'sender': 'jordan',
-            'recipient': 'hermes',
-            'actor': 'jordan',
+            'sender': 'agent-c',
+            'recipient': 'agent-a',
+            'actor': 'agent-c',
             'status': 'closed',
             'subject': 'Lifecycle forward',
             'resolution_summary': 'Done now.',
         }
-        status, payload = _notify_request(notify_url, token='token-hermes', body=event)
+        status, payload = _notify_request(notify_url, token='token-agent-a', body=event)
 
         assert status == 200
         assert payload['actions'] == [
             {
-                'agent': 'hermes',
+                'agent': 'agent-a',
                 'handoff_id': handoff_id,
                 'trigger': 'handoff_closed',
                 'action': 'event_command',
@@ -397,7 +397,7 @@ def test_notify_server_runs_lifecycle_event_command(api_server, monkeypatch, tmp
         ]
         assert json.loads(capture_path.read_text(encoding='utf-8')) == event
 
-        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-hermes')
+        status, handoff = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-a')
         assert status == 200
         assert handoff['status'] == 'open'
     finally:

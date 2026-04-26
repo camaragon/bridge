@@ -11,6 +11,8 @@ for path in (ROOT_DIR, SCRIPTS_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+TEST_AGENTS = ('agent-a', 'agent-b', 'agent-c')
+
 
 @pytest.fixture(autouse=True)
 def bridge_sandbox(tmp_path, monkeypatch):
@@ -20,14 +22,14 @@ def bridge_sandbox(tmp_path, monkeypatch):
     root = tmp_path / 'bridge'
     bridge = root / 'bridge'
     for kind in ('incoming', 'outgoing'):
-        for agent in bridge_cli.AGENTS:
+        for agent in TEST_AGENTS:
             (bridge / kind / agent).mkdir(parents=True, exist_ok=True)
     (bridge / 'archive').mkdir(parents=True, exist_ok=True)
     (bridge / 'audit').mkdir(parents=True, exist_ok=True)
     audit_file = bridge / 'audit' / 'handoff-log.md'
     audit_file.write_text('', encoding='utf-8')
 
-    system_dir = tmp_path / 'hermes' / 'System'
+    system_dir = tmp_path / 'agent-a' / 'System'
     system_dir.mkdir(parents=True, exist_ok=True)
     output = system_dir / 'Bridge Audit View.md'
     archive_output = system_dir / 'Bridge Archive Index.md'

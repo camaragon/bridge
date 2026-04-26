@@ -14,8 +14,8 @@ import bridge_cli
 def _create_handoff(capsys):
     bridge_cli.create(
         Namespace(
-            sender='hermes',
-            recipient='jordan',
+            sender='agent-a',
+            recipient='agent-c',
             issue_type='task',
             handoff_kind='request',
             priority='high',
@@ -35,21 +35,22 @@ def _create_handoff(capsys):
     return result['handoff_id']
 
 
-def test_validate_route_allows_hermes_to_jordan():
-    bridge_cli.validate_route('hermes', 'jordan')
+def test_validate_route_allows_agent_a_to_agent_c():
+    bridge_cli.validate_route('agent-a', 'agent-c')
 
 
-def test_validate_route_rejects_jarvy_to_jordan():
-    with pytest.raises(SystemExit, match='route not allowed by default'):
-        bridge_cli.validate_route('jarvy', 'jordan')
+def test_validate_route_rejects_agent_b_to_agent_c(monkeypatch):
+    monkeypatch.setenv('BRIDGE_ALLOWED_ROUTES', 'agent-a:agent-c,agent-c:agent-a')
+    with pytest.raises(SystemExit, match='route not allowed'):
+        bridge_cli.validate_route('agent-b', 'agent-c')
 
 
 def test_handoff_lifecycle_persists_resolution_summary(bridge_sandbox, capsys):
     handoff_id = _create_handoff(capsys)
     bridge = bridge_sandbox['bridge']
 
-    outgoing = bridge / 'outgoing' / 'hermes' / f'{handoff_id}.md'
-    incoming = bridge / 'incoming' / 'jordan' / f'{handoff_id}.md'
+    outgoing = bridge / 'outgoing' / 'agent-a' / f'{handoff_id}.md'
+    incoming = bridge / 'incoming' / 'agent-c' / f'{handoff_id}.md'
     assert outgoing.exists()
     assert incoming.exists()
 
@@ -58,7 +59,7 @@ def test_handoff_lifecycle_persists_resolution_summary(bridge_sandbox, capsys):
     assert outbox_data['status'] == 'open'
     assert inbox_data['resolution_summary'] == 'pending'
 
-    bridge_cli.set_status(Namespace(actor='jordan', handoff_id=handoff_id, status='acknowledged', outcome=''))
+    bridge_cli.set_status(Namespace(actor='agent-c', handoff_id=handoff_id, status='acknowledged', outcome=''))
     capsys.readouterr()
 
     for path in (outgoing, incoming):
@@ -68,7 +69,7 @@ def test_handoff_lifecycle_persists_resolution_summary(bridge_sandbox, capsys):
 
     bridge_cli.set_status(
         Namespace(
-            actor='jordan',
+            actor='agent-c',
             handoff_id=handoff_id,
             status='closed',
             outcome='Handled safely and fully documented.',
@@ -82,7 +83,7 @@ def test_handoff_lifecycle_persists_resolution_summary(bridge_sandbox, capsys):
         assert data['resolution_summary'] == 'Handled safely and fully documented.'
         assert '## Outcome\nHandled safely and fully documented.' in body
 
-    bridge_cli.archive(Namespace(actor='jordan', handoff_id=handoff_id))
+    bridge_cli.archive(Namespace(actor='agent-c', handoff_id=handoff_id))
     archive_result = json.loads(capsys.readouterr().out)
     archive_dir = bridge / 'archive' / handoff_id
 
@@ -108,13 +109,13 @@ def test_handoff_lifecycle_persists_resolution_summary(bridge_sandbox, capsys):
 def test_archive_requires_closed_status(bridge_sandbox, capsys):
     handoff_id = _create_handoff(capsys)
 
-    outgoing = bridge_sandbox['bridge'] / 'outgoing' / 'hermes' / f'{handoff_id}.md'
-    incoming = bridge_sandbox['bridge'] / 'incoming' / 'jordan' / f'{handoff_id}.md'
+    outgoing = bridge_sandbox['bridge'] / 'outgoing' / 'agent-a' / f'{handoff_id}.md'
+    incoming = bridge_sandbox['bridge'] / 'incoming' / 'agent-c' / f'{handoff_id}.md'
     assert outgoing.exists()
     assert incoming.exists()
 
     with pytest.raises(SystemExit, match='only closed handoffs can be archived'):
-        bridge_cli.archive(Namespace(actor='jordan', handoff_id=handoff_id))
+        bridge_cli.archive(Namespace(actor='agent-c', handoff_id=handoff_id))
 
 
 def test_relocated_bridge_cli_uses_repo_relative_root(tmp_path):
@@ -129,8 +130,8 @@ def test_relocated_bridge_cli_uses_repo_relative_root(tmp_path):
             sys.executable,
             str(relocated_root / 'scripts' / 'bridge_cli.py'),
             'create',
-            '--sender', 'hermes',
-            '--recipient', 'jordan',
+            '--sender', 'agent-a',
+            '--recipient', 'agent-c',
             '--issue-type', 'task',
             '--subject', 'Relocated root test',
             '--requested-action', 'Verify repo-relative defaults',
@@ -142,8 +143,8 @@ def test_relocated_bridge_cli_uses_repo_relative_root(tmp_path):
     )
     payload = json.loads(proc.stdout)
 
-    expected_outbox = relocated_root / 'bridge' / 'outgoing' / 'hermes' / f"{payload['handoff_id']}.md"
-    expected_inbox = relocated_root / 'bridge' / 'incoming' / 'jordan' / f"{payload['handoff_id']}.md"
+    expected_outbox = relocated_root / 'bridge' / 'outgoing' / 'agent-a' / f"{payload['handoff_id']}.md"
+    expected_inbox = relocated_root / 'bridge' / 'incoming' / 'agent-c' / f"{payload['handoff_id']}.md"
 
     assert Path(payload['outbox']) == expected_outbox
     assert Path(payload['inbox']) == expected_inbox

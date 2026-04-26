@@ -12,13 +12,15 @@ from bridge_core.policy import (
 )
 
 
-def test_require_route_allows_hermes_to_jarvy() -> None:
-    require_route("hermes", "jarvy")
+def test_require_route_allows_arbitrary_agents_when_no_policy_is_configured() -> None:
+    require_route("agent-a", "agent-b")
 
 
-def test_require_route_rejects_jarvy_to_jordan() -> None:
+def test_require_route_rejects_pairs_outside_configured_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BRIDGE_ALLOWED_ROUTES", "agent-a:agent-b,agent-b:agent-a")
+
     with pytest.raises(RoutePolicyError, match="route not allowed"):
-        require_route("jarvy", "jordan")
+        require_route("agent-a", "agent-c")
 
 
 def test_normalize_status_supports_acked_alias() -> None:
@@ -32,14 +34,14 @@ def test_require_status_transition_rejects_invalid_close_without_outcome() -> No
 
 def test_visible_queues_for_actor_limits_to_sender_recipient_and_archive() -> None:
     paths = visible_queues_for_actor(
-        actor="jordan",
-        sender="hermes",
-        recipient="jordan",
+        actor="agent-b",
+        sender="agent-a",
+        recipient="agent-b",
         handoff_id="HND-1",
     )
 
     assert paths == {
-        "incoming/jordan/HND-1.md",
-        "outgoing/hermes/HND-1.md",
+        "incoming/agent-b/HND-1.md",
+        "outgoing/agent-a/HND-1.md",
         "archive/HND-1/HND-1.md",
     }

@@ -16,8 +16,7 @@ class FileBridgeRepository(BridgeRepository):
 
     def _ensure_layout(self) -> None:
         for kind in ("incoming", "outgoing"):
-            for agent in ("hermes", "jarvy", "jordan"):
-                (self.bridge_root / kind / agent).mkdir(parents=True, exist_ok=True)
+            (self.bridge_root / kind).mkdir(parents=True, exist_ok=True)
         (self.bridge_root / "archive").mkdir(parents=True, exist_ok=True)
         self.audit_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.audit_file.exists():
@@ -35,6 +34,7 @@ class FileBridgeRepository(BridgeRepository):
         outgoing = self._queue_path("outgoing", handoff.sender, handoff.handoff_id)
         incoming = self._queue_path("incoming", handoff.recipient, handoff.handoff_id)
         self._write_record(outgoing, handoff)
+        incoming.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(outgoing, incoming)
         incoming.chmod(0o600)
         self.append_audit(handoff, handoff.status)

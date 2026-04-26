@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Sequence
 import random
 
-AGENTS = ("hermes", "jarvy", "jordan")
 ACTIVE_STATUSES = {"open", "acknowledged", "in_progress", "blocked"}
 ALL_STATUSES = ACTIVE_STATUSES | {"closed", "archived"}
 HANDOFF_KINDS = {"incident", "request", "question", "result"}
