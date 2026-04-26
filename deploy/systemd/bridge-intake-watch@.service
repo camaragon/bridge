@@ -1,0 +1,15 @@
+[Unit]
+Description=Bridge intake notify listener for %i
+After=bridge-api.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/bridge/bridge.env
+EnvironmentFile=-/etc/bridge/%i.env
+WorkingDirectory=/opt/bridge
+ExecStart=/usr/bin/python3 /opt/bridge/scripts/bridge_intake_watch.py --agent %i --listen --host 127.0.0.1 --port ${BRIDGE_NOTIFY_PORT} --event-command="${BRIDGE_NOTIFY_EVENT_COMMAND}"
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

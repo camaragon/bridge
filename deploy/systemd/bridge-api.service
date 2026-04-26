@@ -1,0 +1,14 @@
+[Unit]
+Description=Bridge local API service
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/bridge/bridge.env
+WorkingDirectory=/opt/bridge
+ExecStart=/usr/bin/python3 /opt/bridge/scripts/bridge_api_server.py --host ${BRIDGE_API_HOST} --port ${BRIDGE_API_PORT} --bridge-root ${BRIDGE_ROOT} --config ${BRIDGE_API_CONFIG}
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

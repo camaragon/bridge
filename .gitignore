@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local Bridge runtime state
+bridge/incoming/
+bridge/outgoing/
+bridge/archive/
+bridge/audit/
+
+# Private local shared notes, not part of OSS Bridge core
+core/
+
+# Local config and secrets
+config/bridge_api.env
+config/*.bak-*
+.env
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
