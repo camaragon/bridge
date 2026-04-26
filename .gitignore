@@ -11,10 +11,7 @@ __pycache__/
 venv/
 
 # Local Bridge runtime state
-bridge/incoming/
-bridge/outgoing/
-bridge/archive/
-bridge/audit/
+bridge/
 
 # Private local shared notes, not part of OSS Bridge core
 core/

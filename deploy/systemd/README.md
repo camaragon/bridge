@@ -13,9 +13,7 @@ Adjust paths for your host.
 
 ## Lifecycle event consumers
 `bridge-intake-watch.py` supports per-agent read-only event commands via env vars:
-- `BRIDGE_NOTIFY_EVENT_COMMAND_HERMES`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_JARVY`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_JORDAN`
+- `BRIDGE_NOTIFY_EVENT_COMMAND_<AGENT_ID>`
 
 Each command receives the raw lifecycle JSON event on stdin.
 

@@ -35,7 +35,7 @@ You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` t
 - `tests/` - pytest coverage for core flows, API, wrappers, patrol, and intake watchers
 - `config/bridge_api.example.env` - example config for API tokens and notify hooks
 - `deploy/systemd/` - generic systemd templates for self-hosted deployment
-- `bridge/` - local runtime data created at runtime (`incoming/`, `outgoing/`, `archive/`, `audit/`)
+- `docs/` - extra documentation such as runtime layout and deployment notes
 
 ## Quick start
 
@@ -111,7 +111,9 @@ The wrappers prefer the local API.
 ### 1) Create a local config file
 
 ```bash
+mkdir -p config
 cp config/bridge_api.example.env config/bridge_api.env
+mkdir -p bridge/incoming bridge/outgoing bridge/archive bridge/audit
 ```
 
 Edit `config/bridge_api.env` and replace:
@@ -215,6 +217,8 @@ python3 scripts/bridge_intake_watch.py --agent agent-b --once
 
 Bridge includes patrol tooling for follow-up pressure without mutating the API surface.
 
+See `docs/runtime-layout.md` for runtime directory expectations.
+
 Run patrol manually:
 
 ```bash
@@ -240,12 +244,9 @@ Main runtime variables:
 - `BRIDGE_TOKEN_AGENT_A`
 - `BRIDGE_TOKEN_AGENT_B`
 - `BRIDGE_TOKEN_AGENT_C`
-- `BRIDGE_NOTIFY_URL_AGENT_A`
-- `BRIDGE_NOTIFY_URL_JARVY`
-- `BRIDGE_NOTIFY_URL_JORDAN`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_HERMES`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_JARVY`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_JORDAN`
+- `BRIDGE_NOTIFY_URL_<AGENT_ID>`
+- `BRIDGE_NOTIFY_EVENT_COMMAND_<AGENT_ID>`
+- `BRIDGE_ALLOWED_ROUTES`
 
 ## Safety boundary
 
