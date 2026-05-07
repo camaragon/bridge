@@ -139,6 +139,126 @@ def test_intake_once_acknowledges_open_handoff(api_server, monkeypatch) -> None:
     assert payload['acknowledged_at'] != 'none'
 
 
+def test_intake_once_runs_intake_event_command(api_server, monkeypatch, tmp_path: Path) -> None:
+    _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
+    capture_path = tmp_path / 'captured-intake-event.json'
+    script_path = tmp_path / 'capture_intake_event.py'
+    script_path.write_text(
+        """import json, os, pathlib, sys\npayload = {\n    'stdin': json.loads(sys.stdin.read()),\n    'env': {key: os.environ.get(key) for key in [\n        'BRIDGE_INTAKE_AGENT',\n        'BRIDGE_INTAKE_TRIGGER',\n        'BRIDGE_INTAKE_HANDOFF_ID',\n        'BRIDGE_INTAKE_EVENT_JSON',\n        'BRIDGE_NOTIFY_AGENT',\n    ]},\n}\npathlib.Path(sys.argv[1]).write_text(json.dumps(payload), encoding='utf-8')\n""",
+        encoding='utf-8',
+    )
+
+    status, created = _request(
+        api_server['base_url'],
+        'POST',
+        '/v1/handoffs',
+        token='token-agent-a',
+        body={
+            'recipient': 'agent-c',
+            'issue_type': 'task',
+            'subject': 'Mirror me',
+            'requested_action': 'Acknowledge and emit intake event.',
+            'minimal_context': 'Local deployments may mirror this to a work queue.',
+        },
+    )
+    assert status == 201
+    handoff_id = str(created['handoff_id'])
+
+    actions = bridge_intake_watch.intake_once(
+        'agent-c',
+        intake_event_command=f'{sys.executable} {script_path} {capture_path}',
+    )
+
+    assert actions == [
+        {
+            'agent': 'agent-c',
+            'handoff_id': handoff_id,
+            'status': 'acknowledged',
+            'ack_source': 'auto',
+            'subject': 'Mirror me',
+            'action': 'acknowledged',
+        },
+        {
+            'agent': 'agent-c',
+            'handoff_id': handoff_id,
+            'trigger': 'handoff_acknowledged',
+            'action': 'intake_event_command',
+            'exit_code': 0,
+        },
+    ]
+    captured = json.loads(capture_path.read_text(encoding='utf-8'))
+    expected_event = {
+        'trigger': 'handoff_acknowledged',
+        'handoff_id': handoff_id,
+        'sender': 'agent-a',
+        'recipient': 'agent-c',
+        'actor': 'agent-c',
+        'status': 'acknowledged',
+        'subject': 'Mirror me',
+        'acknowledgment_source': 'auto',
+    }
+    assert captured['stdin'] == expected_event
+    assert captured['env'] == {
+        'BRIDGE_INTAKE_AGENT': 'agent-c',
+        'BRIDGE_INTAKE_TRIGGER': 'handoff_acknowledged',
+        'BRIDGE_INTAKE_HANDOFF_ID': handoff_id,
+        'BRIDGE_INTAKE_EVENT_JSON': json.dumps(expected_event, sort_keys=True),
+        'BRIDGE_NOTIFY_AGENT': None,
+    }
+
+
+def test_resolve_intake_event_command_precedence_and_whitespace(monkeypatch) -> None:
+    monkeypatch.delenv('BRIDGE_INTAKE_EVENT_COMMAND_AGENT_C', raising=False)
+    monkeypatch.delenv('BRIDGE_INTAKE_EVENT_COMMAND', raising=False)
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c') is None
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c', '   ') is None
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c', 'cli-hook') == 'cli-hook'
+
+    monkeypatch.setenv('BRIDGE_INTAKE_EVENT_COMMAND', 'generic-hook')
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c') == 'generic-hook'
+
+    monkeypatch.setenv('BRIDGE_INTAKE_EVENT_COMMAND_AGENT_C', 'scoped-hook')
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c') == 'scoped-hook'
+    assert bridge_intake_watch._resolve_intake_event_command('agent-c', 'cli-hook') == 'cli-hook'
+
+
+def test_intake_event_command_failure_is_best_effort(api_server, monkeypatch, tmp_path: Path) -> None:
+    _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
+    script_path = tmp_path / 'fail_intake_event.py'
+    script_path.write_text("""import sys\nprint('bad hook', file=sys.stderr)\nsys.exit(7)\n""", encoding='utf-8')
+
+    for subject in ('First', 'Second'):
+        status, _created = _request(
+            api_server['base_url'],
+            'POST',
+            '/v1/handoffs',
+            token='token-agent-a',
+            body={
+                'recipient': 'agent-c',
+                'issue_type': 'task',
+                'subject': subject,
+                'requested_action': 'Acknowledge even if hook fails.',
+                'minimal_context': 'Hook should be best-effort.',
+            },
+        )
+        assert status == 201
+
+    actions = bridge_intake_watch.intake_once(
+        'agent-c',
+        intake_event_command=f'{sys.executable} {script_path}',
+    )
+
+    assert [action['action'] for action in actions] == [
+        'acknowledged',
+        'intake_event_command',
+        'acknowledged',
+        'intake_event_command',
+    ]
+    failures = [action for action in actions if action['action'] == 'intake_event_command']
+    assert all(action['exit_code'] == 7 for action in failures)
+    assert all(action['error'] == 'bad hook' for action in failures)
+
+
 def test_intake_once_ignores_non_open_handoffs(api_server, monkeypatch) -> None:
     _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
 
