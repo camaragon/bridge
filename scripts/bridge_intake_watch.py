@@ -130,12 +130,18 @@ class IntakeNotifyHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, sort_keys=True).encode('utf-8')
-        self.send_response(int(status))
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(int(status))
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            # The Bridge API posts notify events with a short timeout and does not
+            # need the response body after the event command has completed. Avoid
+            # noisy tracebacks when the client closes first.
+            return
 
 
 def build_notify_server(

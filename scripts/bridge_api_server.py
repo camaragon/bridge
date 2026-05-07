@@ -243,12 +243,15 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, sort_keys=True).encode("utf-8")
-        self.send_response(int(status))
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(int(status))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
 
 class ApiError(Exception):
