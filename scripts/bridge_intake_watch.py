@@ -197,7 +197,15 @@ def _resolve_intake_event_command(agent: str, intake_event_command: str | None =
     return generic or None
 
 
-def _run_event_command(agent: str, event: dict[str, Any], *, event_command: str) -> dict[str, Any]:
+def _run_event_command(
+    agent: str,
+    event: dict[str, Any],
+    *,
+    event_command: str,
+    env_prefix: str = 'BRIDGE_NOTIFY',
+    action: str = 'event_command',
+    raise_on_failure: bool = True,
+) -> dict[str, Any]:
     handoff_id = str(event.get('handoff_id', '') or '')
     trigger = str(event.get('trigger', '') or '')
     argv = shlex.split(event_command)
@@ -205,30 +213,52 @@ def _run_event_command(agent: str, event: dict[str, Any], *, event_command: str)
         raise SystemExit('event command resolved to empty argv')
     env = os.environ.copy()
     env.update({
-        'BRIDGE_NOTIFY_AGENT': agent,
-        'BRIDGE_NOTIFY_TRIGGER': trigger,
-        'BRIDGE_NOTIFY_HANDOFF_ID': handoff_id,
-        'BRIDGE_NOTIFY_EVENT_JSON': json.dumps(event, sort_keys=True),
+        f'{env_prefix}_AGENT': agent,
+        f'{env_prefix}_TRIGGER': trigger,
+        f'{env_prefix}_HANDOFF_ID': handoff_id,
+        f'{env_prefix}_EVENT_JSON': json.dumps(event, sort_keys=True),
     })
-    completed = subprocess.run(
-        argv,
-        input=json.dumps(event, sort_keys=True),
-        text=True,
-        capture_output=True,
-        timeout=EVENT_COMMAND_TIMEOUT_SECONDS,
-        env=env,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            argv,
+            input=json.dumps(event, sort_keys=True),
+            text=True,
+            capture_output=True,
+            timeout=EVENT_COMMAND_TIMEOUT_SECONDS,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        detail = f'timed out after {EVENT_COMMAND_TIMEOUT_SECONDS:g}s'
+        if raise_on_failure:
+            raise SystemExit(f'event command failed for {trigger or "unknown"}: {detail}') from exc
+        return {
+            'agent': agent,
+            'handoff_id': handoff_id,
+            'trigger': trigger,
+            'action': action,
+            'exit_code': None,
+            'error': detail,
+        }
     if completed.returncode != 0:
         stderr = (completed.stderr or '').strip()
         stdout = (completed.stdout or '').strip()
         detail = stderr or stdout or f'exit {completed.returncode}'
-        raise SystemExit(f'event command failed for {trigger or "unknown"}: {detail}')
+        if raise_on_failure:
+            raise SystemExit(f'event command failed for {trigger or "unknown"}: {detail}')
+        return {
+            'agent': agent,
+            'handoff_id': handoff_id,
+            'trigger': trigger,
+            'action': action,
+            'exit_code': completed.returncode,
+            'error': detail,
+        }
     return {
         'agent': agent,
         'handoff_id': handoff_id,
         'trigger': trigger,
-        'action': 'event_command',
+        'action': action,
         'exit_code': completed.returncode,
     }
 
@@ -248,9 +278,14 @@ def _build_acknowledged_event(agent: str, source: dict[str, Any], acked: dict[st
 
 def _run_intake_event_command(agent: str, source: dict[str, Any], acked: dict[str, Any], *, intake_event_command: str) -> dict[str, Any]:
     event = _build_acknowledged_event(agent, source, acked)
-    result = _run_event_command(agent, event, event_command=intake_event_command)
-    result['action'] = 'intake_event_command'
-    return result
+    return _run_event_command(
+        agent,
+        event,
+        event_command=intake_event_command,
+        env_prefix='BRIDGE_INTAKE',
+        action='intake_event_command',
+        raise_on_failure=False,
+    )
 
 
 
@@ -284,6 +319,7 @@ def handle_notify_event(
 
 def intake_once(agent: str, *, dry_run: bool = False, intake_event_command: str | None = None) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
+    resolved_intake_command = _resolve_intake_event_command(agent, intake_event_command)
     for item in list_active_handoffs(agent):
         handoff_id = str(item.get('handoff_id', '') or '')
         if not handoff_id:
@@ -301,7 +337,7 @@ def intake_once(agent: str, *, dry_run: bool = False, intake_event_command: str 
                 'subject': subject,
                 'action': 'would_acknowledge',
             })
-            if _resolve_intake_event_command(agent, intake_event_command):
+            if resolved_intake_command:
                 actions.append({
                     'agent': agent,
                     'handoff_id': handoff_id,
@@ -318,7 +354,6 @@ def intake_once(agent: str, *, dry_run: bool = False, intake_event_command: str 
             'subject': subject,
             'action': 'acknowledged',
         })
-        resolved_intake_command = _resolve_intake_event_command(agent, intake_event_command)
         if resolved_intake_command:
             actions.append(_run_intake_event_command(agent, item, acked, intake_event_command=resolved_intake_command))
     return actions
