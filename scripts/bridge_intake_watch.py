@@ -35,15 +35,28 @@ def _event_command_env_var(agent: str) -> str:
     return env_key_for_agent('BRIDGE_NOTIFY_EVENT_COMMAND_', agent)
 
 
+def _intake_event_command_env_var(agent: str) -> str:
+    return env_key_for_agent('BRIDGE_INTAKE_EVENT_COMMAND_', agent)
+
+
 class IntakeNotifyServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, server_address: tuple[str, int], *, agent: str, dry_run: bool, event_command: str | None = None):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        *,
+        agent: str,
+        dry_run: bool,
+        event_command: str | None = None,
+        intake_event_command: str | None = None,
+    ):
         super().__init__(server_address, IntakeNotifyHandler)
         self.agent = agent
         self.dry_run = dry_run
         self.event_command = event_command or None
+        self.intake_event_command = intake_event_command or None
 
 
 class IntakeNotifyHandler(BaseHTTPRequestHandler):
@@ -68,6 +81,7 @@ class IntakeNotifyHandler(BaseHTTPRequestHandler):
                 event,
                 dry_run=self.server.dry_run,
                 event_command=self.server.event_command,
+                intake_event_command=self.server.intake_event_command,
             )
         except AuthenticationError as exc:
             self._send_json(HTTPStatus.UNAUTHORIZED, {'error': 'unauthorized', 'detail': str(exc)})
@@ -131,8 +145,15 @@ def build_notify_server(
     port: int = DEFAULT_NOTIFY_PORT,
     dry_run: bool = False,
     event_command: str | None = None,
+    intake_event_command: str | None = None,
 ) -> IntakeNotifyServer:
-    return IntakeNotifyServer((host, port), agent=agent, dry_run=dry_run, event_command=event_command)
+    return IntakeNotifyServer(
+        (host, port),
+        agent=agent,
+        dry_run=dry_run,
+        event_command=event_command,
+        intake_event_command=intake_event_command,
+    )
 
 
 def list_active_handoffs(agent: str) -> list[dict[str, Any]]:
@@ -162,6 +183,17 @@ def _resolve_event_command(agent: str, event_command: str | None = None) -> str 
     if scoped:
         return scoped
     generic = os.getenv('BRIDGE_NOTIFY_EVENT_COMMAND', '').strip()
+    return generic or None
+
+
+def _resolve_intake_event_command(agent: str, intake_event_command: str | None = None) -> str | None:
+    if intake_event_command:
+        command = intake_event_command.strip()
+        return command or None
+    scoped = os.getenv(_intake_event_command_env_var(agent), '').strip()
+    if scoped:
+        return scoped
+    generic = os.getenv('BRIDGE_INTAKE_EVENT_COMMAND', '').strip()
     return generic or None
 
 
@@ -201,7 +233,35 @@ def _run_event_command(agent: str, event: dict[str, Any], *, event_command: str)
     }
 
 
-def handle_notify_event(agent: str, event: dict[str, Any], *, dry_run: bool = False, event_command: str | None = None) -> list[dict[str, Any]]:
+def _build_acknowledged_event(agent: str, source: dict[str, Any], acked: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'trigger': 'handoff_acknowledged',
+        'handoff_id': str(acked.get('handoff_id', '') or source.get('handoff_id', '') or ''),
+        'sender': str(acked.get('sender', '') or source.get('sender', '') or ''),
+        'recipient': str(acked.get('recipient', '') or source.get('recipient', '') or agent),
+        'actor': agent,
+        'status': str(acked.get('status', '') or 'acknowledged'),
+        'subject': str(acked.get('subject', '') or source.get('subject', '') or ''),
+        'acknowledgment_source': str(acked.get('acknowledgment_source', '') or 'auto'),
+    }
+
+
+def _run_intake_event_command(agent: str, source: dict[str, Any], acked: dict[str, Any], *, intake_event_command: str) -> dict[str, Any]:
+    event = _build_acknowledged_event(agent, source, acked)
+    result = _run_event_command(agent, event, event_command=intake_event_command)
+    result['action'] = 'intake_event_command'
+    return result
+
+
+
+def handle_notify_event(
+    agent: str,
+    event: dict[str, Any],
+    *,
+    dry_run: bool = False,
+    event_command: str | None = None,
+    intake_event_command: str | None = None,
+) -> list[dict[str, Any]]:
     trigger = str(event.get('trigger', '') or '')
     if trigger in LIFECYCLE_NOTIFY_TRIGGERS:
         resolved_command = _resolve_event_command(agent, event_command)
@@ -215,10 +275,14 @@ def handle_notify_event(agent: str, event: dict[str, Any], *, dry_run: bool = Fa
                 'action': 'would_run_event_command',
             }]
         return [_run_event_command(agent, event, event_command=resolved_command)]
-    return intake_once(agent, dry_run=dry_run)
+    return intake_once(
+        agent,
+        dry_run=dry_run,
+        intake_event_command=intake_event_command,
+    )
 
 
-def intake_once(agent: str, *, dry_run: bool = False) -> list[dict[str, Any]]:
+def intake_once(agent: str, *, dry_run: bool = False, intake_event_command: str | None = None) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     for item in list_active_handoffs(agent):
         handoff_id = str(item.get('handoff_id', '') or '')
@@ -237,6 +301,13 @@ def intake_once(agent: str, *, dry_run: bool = False) -> list[dict[str, Any]]:
                 'subject': subject,
                 'action': 'would_acknowledge',
             })
+            if _resolve_intake_event_command(agent, intake_event_command):
+                actions.append({
+                    'agent': agent,
+                    'handoff_id': handoff_id,
+                    'trigger': 'handoff_acknowledged',
+                    'action': 'would_run_intake_event_command',
+                })
             continue
         acked = acknowledge_open_handoff(agent, handoff_id)
         actions.append({
@@ -247,8 +318,10 @@ def intake_once(agent: str, *, dry_run: bool = False) -> list[dict[str, Any]]:
             'subject': subject,
             'action': 'acknowledged',
         })
+        resolved_intake_command = _resolve_intake_event_command(agent, intake_event_command)
+        if resolved_intake_command:
+            actions.append(_run_intake_event_command(agent, item, acked, intake_event_command=resolved_intake_command))
     return actions
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Poll the Bridge API and promptly acknowledge new handoffs for one agent.')
@@ -264,6 +337,11 @@ def parse_args() -> argparse.Namespace:
         default='',
         help='optional command to run for handoff_closed/handoff_blocked lifecycle events; receives event JSON on stdin',
     )
+    parser.add_argument(
+        '--intake-event-command',
+        default='',
+        help='optional command to run after auto-acknowledging a new handoff; receives handoff_acknowledged JSON on stdin',
+    )
     return parser.parse_args()
 
 
@@ -271,9 +349,16 @@ def _emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, sort_keys=True), flush=True)
 
 
-def _run_poll_loop(agent: str, *, dry_run: bool, once: bool, poll_interval: float) -> None:
+def _run_poll_loop(
+    agent: str,
+    *,
+    dry_run: bool,
+    once: bool,
+    poll_interval: float,
+    intake_event_command: str | None = None,
+) -> None:
     while True:
-        actions = intake_once(agent, dry_run=dry_run)
+        actions = intake_once(agent, dry_run=dry_run, intake_event_command=intake_event_command)
         _emit({
             'agent': agent,
             'checked_at': int(time.time()),
@@ -289,6 +374,7 @@ def main() -> None:
     args.agent = normalize_agent_id(args.agent)
     poll_interval = max(args.poll_interval, 1.0)
     event_command = _resolve_event_command(args.agent, args.event_command)
+    intake_event_command = _resolve_intake_event_command(args.agent, args.intake_event_command)
     if args.listen:
         server = build_notify_server(
             agent=args.agent,
@@ -296,6 +382,7 @@ def main() -> None:
             port=args.port,
             dry_run=args.dry_run,
             event_command=event_command,
+            intake_event_command=intake_event_command,
         )
         _emit({
             'agent': args.agent,
@@ -303,6 +390,7 @@ def main() -> None:
             'health_url': f'http://{args.host}:{server.server_port}/health',
             'mode': 'notify',
             'event_command_configured': bool(event_command),
+            'intake_event_command_configured': bool(intake_event_command),
         })
         try:
             server.serve_forever()
@@ -311,8 +399,15 @@ def main() -> None:
         finally:
             server.server_close()
         return
-    _run_poll_loop(args.agent, dry_run=args.dry_run, once=args.once, poll_interval=poll_interval)
+    _run_poll_loop(
+        args.agent,
+        dry_run=args.dry_run,
+        once=args.once,
+        poll_interval=poll_interval,
+        intake_event_command=intake_event_command,
+    )
 
 
 if __name__ == '__main__':
     main()
+

@@ -204,6 +204,12 @@ Bridge supports two layers of notification behavior:
    - the command receives raw JSON on stdin
    - this keeps Bridge core separate from Telegram, BlueBubbles, Slack, or other UI-specific adapters
 
+3. **read-only intake event consumers**
+   - configured with `BRIDGE_INTAKE_EVENT_COMMAND_<AGENT>`
+   - `bridge_intake_watch.py` can execute a command after auto-acknowledging a newly received handoff
+   - the command receives a generic `handoff_acknowledged` JSON event on stdin
+   - use this for local work-queue mirroring, indexing, or alerting without baking those systems into Bridge
+
 Run a recipient listener:
 
 ```bash

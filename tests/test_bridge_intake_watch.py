@@ -139,6 +139,65 @@ def test_intake_once_acknowledges_open_handoff(api_server, monkeypatch) -> None:
     assert payload['acknowledged_at'] != 'none'
 
 
+def test_intake_once_runs_intake_event_command(api_server, monkeypatch, tmp_path: Path) -> None:
+    _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
+    capture_path = tmp_path / 'captured-intake-event.json'
+    script_path = tmp_path / 'capture_intake_event.py'
+    script_path.write_text(
+        """import pathlib, sys\npathlib.Path(sys.argv[1]).write_text(sys.stdin.read(), encoding='utf-8')\n""",
+        encoding='utf-8',
+    )
+
+    status, created = _request(
+        api_server['base_url'],
+        'POST',
+        '/v1/handoffs',
+        token='token-agent-a',
+        body={
+            'recipient': 'agent-c',
+            'issue_type': 'task',
+            'subject': 'Mirror me',
+            'requested_action': 'Acknowledge and emit intake event.',
+            'minimal_context': 'Local deployments may mirror this to a work queue.',
+        },
+    )
+    assert status == 201
+    handoff_id = str(created['handoff_id'])
+
+    actions = bridge_intake_watch.intake_once(
+        'agent-c',
+        intake_event_command=f'{sys.executable} {script_path} {capture_path}',
+    )
+
+    assert actions == [
+        {
+            'agent': 'agent-c',
+            'handoff_id': handoff_id,
+            'status': 'acknowledged',
+            'ack_source': 'auto',
+            'subject': 'Mirror me',
+            'action': 'acknowledged',
+        },
+        {
+            'agent': 'agent-c',
+            'handoff_id': handoff_id,
+            'trigger': 'handoff_acknowledged',
+            'action': 'intake_event_command',
+            'exit_code': 0,
+        },
+    ]
+    assert json.loads(capture_path.read_text(encoding='utf-8')) == {
+        'trigger': 'handoff_acknowledged',
+        'handoff_id': handoff_id,
+        'sender': 'agent-a',
+        'recipient': 'agent-c',
+        'actor': 'agent-c',
+        'status': 'acknowledged',
+        'subject': 'Mirror me',
+        'acknowledgment_source': 'auto',
+    }
+
+
 def test_intake_once_ignores_non_open_handoffs(api_server, monkeypatch) -> None:
     _configure_watch_env(monkeypatch, api_server['bridge_root'], api_server['base_url'])
 
