@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import ContextManager
 
+from .events import LifecycleEvent
 from .models import HandoffRecord, StoredHandoff
 
 
@@ -10,9 +12,25 @@ class HandoffNotFoundError(FileNotFoundError):
     pass
 
 
+class IdempotencyConflictError(ValueError):
+    pass
+
+
+class RevisionConflictError(ValueError):
+    pass
+
+
+class RepositoryConflictError(RuntimeError):
+    pass
+
+
 class BridgeRepository(ABC):
     @abstractmethod
-    def create(self, handoff: HandoffRecord) -> HandoffRecord:
+    def create(self, handoff: HandoffRecord, *, idempotency_key: str | None = None) -> HandoffRecord:
+        raise NotImplementedError
+
+    @abstractmethod
+    def handoff_lock(self, handoff_id: str) -> ContextManager[None]:
         raise NotImplementedError
 
     @abstractmethod
@@ -33,4 +51,39 @@ class BridgeRepository(ABC):
 
     @abstractmethod
     def append_audit(self, handoff: HandoffRecord, status: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def enqueue_event(self, event: LifecycleEvent) -> LifecycleEvent:
+        raise NotImplementedError
+
+    @abstractmethod
+    def prepare_event(self, event: LifecycleEvent) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def complete_event(self, event_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_events(self, *, states: set[str] | None = None) -> list[LifecycleEvent]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_event(self, event: LifecycleEvent) -> LifecycleEvent:
+        raise NotImplementedError
+
+    @abstractmethod
+    def replay_event(self, event_id: str) -> LifecycleEvent:
+        raise NotImplementedError
+
+    @abstractmethod
+    def resolve_transaction(
+        self,
+        event_id: str,
+        *,
+        action: str,
+        reason: str,
+        force_recoverable_discard: bool = False,
+    ) -> LifecycleEvent:
         raise NotImplementedError

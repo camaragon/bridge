@@ -7,10 +7,10 @@ It gives you a bounded place to create, receive, track, and close agent-to-agent
 ## What it does
 
 - creates explicit handoff records between agents
-- stores sender and recipient copies on disk for auditability
+- stores an authoritative canonical record plus recoverable sender and recipient queue views
 - enforces route policy and status transitions
 - exposes a local HTTP API for wrappers and automation
-- supports immediate lifecycle notifications (`create`, `close`, `block`)
+- supports durable at-least-once lifecycle events plus immediate compatibility notifications
 - supports read-only event consumers for surfacing lifecycle events into chat/UI adapters
 - includes patrol tooling for reminders and unresolved-handoff detection
 
@@ -28,7 +28,7 @@ Route policy is optional:
 
 You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` to adopt your own ecosystem.
 
-For deeper docs, start with `docs/README.md`.
+For deeper docs, start with `docs/README.md` and `docs/bridge-v2-reliability.md`.
 
 ## Repository layout
 
@@ -76,7 +76,8 @@ python3 scripts/bridge_cli.py create \
   --issue-type task \
   --subject "Demo handoff" \
   --requested-action "Inspect the repo and report back" \
-  --minimal-context "Started from the README quickstart"
+  --minimal-context "Started from the README quickstart" \
+  --idempotency-key "demo-create-1"
 ```
 
 You should get JSON like:
@@ -187,8 +188,22 @@ python3 scripts/bridge_agent.py --agent agent-b close HND-... --outcome "Verifie
 - `POST /v1/handoffs/{handoff_id}/ack`
 - `POST /v1/handoffs/{handoff_id}/block`
 - `POST /v1/handoffs/{handoff_id}/close`
+- `POST /v1/handoffs/{handoff_id}/cancel`
 - `POST /v1/handoffs/{handoff_id}/status`
 - `POST /v1/handoffs/{handoff_id}/archive`
+
+Create accepts `Idempotency-Key` or `idempotency_key`. Lifecycle writes accept `expected_revision` or an `If-Match` header and return HTTP 409 for stale revisions.
+
+Durable outbox and reconciliation commands:
+
+```bash
+python3 scripts/bridge_cli.py outbox-list --state pending
+python3 scripts/bridge_cli.py outbox-deliver --limit 100
+python3 scripts/bridge_cli.py outbox-replay EVT-...
+python3 scripts/bridge_cli.py outbox-recover
+python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action enqueue --reason "verified missing delivery"
+python3 scripts/bridge_cli.py reconcile --check-only
+```
 
 ## Lifecycle notifications
 

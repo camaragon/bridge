@@ -22,7 +22,7 @@ from bridge_core.file_repository import FileBridgeRepository
 from bridge_core.frontmatter import parse_frontmatter
 from bridge_core.models import CreateHandoffInput, DEFAULT_RESPONSE_FORMAT, HandoffRecord
 from bridge_core.policy import AccessPolicyError, BridgePolicyError, RoutePolicyError, StatusPolicyError, is_active_status, require_actor_access
-from bridge_core.repository import HandoffNotFoundError
+from bridge_core.repository import HandoffNotFoundError, IdempotencyConflictError, RevisionConflictError
 from bridge_core.runtime import env_key_for_agent
 from bridge_core.service import BridgeService
 
@@ -90,7 +90,7 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
             if method == "GET" and action is None:
                 self._handle_get(actor, handoff_id)
                 return
-            if method == "POST" and action in {"ack", "block", "close", "archive", "status"}:
+            if method == "POST" and action in {"ack", "block", "close", "cancel", "archive", "status"}:
                 body = self._read_json_body(required=False)
                 self._handle_action(actor, handoff_id, action, body)
                 return
@@ -158,23 +158,18 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
                 response_format=str(body.get("response_format") or DEFAULT_RESPONSE_FORMAT),
                 related_paths=_coerce_string_list(body.get("related_paths", []), field_name="related_paths"),
                 constraints=str(body.get("constraints", "- none") or "- none"),
+                idempotency_key=str(body.get("idempotency_key") or self.headers.get("Idempotency-Key") or "") or None,
+                correlation_id=str(body.get("correlation_id") or "") or None,
+                causation_id=str(body.get("causation_id") or "") or None,
             )
             record = self.server.context.service.create_handoff(request)
         except RoutePolicyError as exc:
             raise ApiError(HTTPStatus.FORBIDDEN, "forbidden", str(exc)) from exc
+        except IdempotencyConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, "idempotency_conflict", str(exc)) from exc
         except (BridgePolicyError, ValueError, TypeError) as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_request", str(exc)) from exc
-        _notify_agent(
-            self.server.context,
-            target_agent=record.recipient,
-            payload={
-                "handoff_id": record.handoff_id,
-                "recipient": record.recipient,
-                "sender": record.sender,
-                "subject": record.subject,
-                "trigger": "handoff_created",
-            },
-        )
+        _deliver_pending_for_handoff(self.server.context, record.handoff_id, record.revision)
         self._send_json(HTTPStatus.CREATED, _record_to_dict(record))
 
     def _handle_list(self, actor: str, *, active_only: bool) -> None:
@@ -193,10 +188,15 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
     def _handle_action(self, actor: str, handoff_id: str, action: str, body: dict[str, Any]) -> None:
         try:
             if action == "archive":
-                archive_dir = self.server.context.service.archive_handoff(handoff_id, actor=actor)
+                archive_dir = self.server.context.service.archive_handoff(
+                    handoff_id,
+                    actor=actor,
+                    expected_revision=self._expected_revision(body),
+                )
                 record = self.server.context.service.get_handoff(handoff_id, actor=actor)
                 payload = _record_to_dict(record)
                 payload["archive_path"] = str(archive_dir)
+                _deliver_pending_for_handoff(self.server.context, record.handoff_id, record.revision)
                 self._send_json(HTTPStatus.OK, payload)
                 return
             if action == "status":
@@ -206,6 +206,7 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
                     "ack": "acknowledged",
                     "block": "blocked",
                     "close": "closed",
+                    "cancel": "cancelled",
                 }[action]
             outcome = str(body.get("outcome", "") or "")
             acknowledgment_source = None
@@ -217,38 +218,43 @@ class BridgeApiHandler(BaseHTTPRequestHandler):
                 status=status_name,
                 outcome=outcome,
                 acknowledgment_source=acknowledgment_source,
+                expected_revision=self._expected_revision(body),
             )
         except HandoffNotFoundError as exc:
             raise ApiError(HTTPStatus.NOT_FOUND, "not_found", str(exc)) from exc
         except AccessPolicyError as exc:
             raise ApiError(HTTPStatus.FORBIDDEN, "forbidden", str(exc)) from exc
+        except RevisionConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, "revision_conflict", str(exc)) from exc
         except StatusPolicyError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, "bad_request", str(exc)) from exc
-        if action in {"close", "block"}:
-            _notify_agent(
-                self.server.context,
-                target_agent=record.sender,
-                payload={
-                    "trigger": f"handoff_{record.status}",
-                    "handoff_id": record.handoff_id,
-                    "sender": record.sender,
-                    "recipient": record.recipient,
-                    "actor": actor,
-                    "status": record.status,
-                    "subject": record.subject,
-                    "resolution_summary": record.resolution_summary,
-                },
-            )
+        _deliver_pending_for_handoff(self.server.context, record.handoff_id, record.revision)
         self._send_json(HTTPStatus.OK, _record_to_dict(record))
+
+    def _expected_revision(self, body: dict[str, Any]) -> int | None:
+        value: object | None = body.get("expected_revision")
+        if value is None:
+            raw = self.headers.get("If-Match", "").strip()
+            if raw:
+                value = raw.removeprefix("W/").strip().strip('"')
+        if value in (None, ""):
+            return None
+        try:
+            return int(str(value))
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "bad_request", "expected_revision/If-Match must be an integer") from exc
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, sort_keys=True).encode("utf-8")
-        self.send_response(int(status))
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(int(status))
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
 
 class ApiError(Exception):
@@ -328,13 +334,19 @@ def _record_from_path(path: Path) -> HandoffRecord:
     return HandoffRecord.from_mapping(data, body)
 
 
-def _notify_agent(context: ApiContext, *, target_agent: str, payload: dict[str, Any]) -> None:
+def _notify_agent(
+    context: ApiContext,
+    *,
+    target_agent: str,
+    payload: dict[str, Any],
+    event_id: str = "",
+) -> tuple[bool, str]:
     notify_url = os.environ.get(env_key_for_agent("BRIDGE_NOTIFY_URL_", target_agent), "").strip()
     if not notify_url:
-        return
+        return False, f"no notify endpoint configured for {target_agent}"
     token = load_agent_tokens(context.config_path).get(target_agent, "")
     if not token:
-        return
+        return False, f"no token configured for {target_agent}"
     request = Request(
         notify_url,
         method="POST",
@@ -343,13 +355,64 @@ def _notify_agent(context: ApiContext, *, target_agent: str, payload: dict[str, 
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            **({"X-Bridge-Event-ID": event_id} if event_id else {}),
         },
     )
     try:
         with urlopen(request, timeout=DEFAULT_NOTIFY_TIMEOUT_SECONDS):
-            return
-    except Exception:
-        return
+            return True, "delivered"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _deliver_pending_for_handoff(context: ApiContext, handoff_id: str, revision: int) -> None:
+    candidates = [
+        event
+        for event in context.service.list_outbox(states={"pending", "retrying"})
+        if event.handoff_id == handoff_id and event.revision == revision and event.due()
+    ]
+    for event in candidates:
+        ok, detail = _notify_agent(
+            context,
+            target_agent=event.target_agent,
+            payload=_legacy_notify_payload(event),
+            event_id=event.event_id,
+        )
+        if ok:
+            context.service._mark_event_delivered(event)
+        else:
+            context.service._mark_event_failed(
+                event,
+                detail,
+                max_attempts=int(os.environ.get("BRIDGE_OUTBOX_MAX_ATTEMPTS", "8")),
+                base_delay_seconds=float(os.environ.get("BRIDGE_OUTBOX_BASE_DELAY_SECONDS", "1")),
+                max_delay_seconds=float(os.environ.get("BRIDGE_OUTBOX_MAX_DELAY_SECONDS", "300")),
+            )
+
+
+def _legacy_notify_payload(event) -> dict[str, Any]:
+    if event.event_type == "handoff_created":
+        return {
+            "handoff_id": event.handoff_id,
+            "recipient": event.recipient,
+            "sender": event.sender,
+            "subject": event.subject,
+            "trigger": event.event_type,
+        }
+    if event.event_type in {"handoff_closed", "handoff_blocked"}:
+        return {
+            "trigger": event.event_type,
+            "handoff_id": event.handoff_id,
+            "sender": event.sender,
+            "recipient": event.recipient,
+            "actor": event.actor,
+            "status": event.status,
+            "subject": event.subject,
+            "resolution_summary": event.resolution_summary,
+        }
+    payload = event.to_dict()
+    payload["trigger"] = event.event_type
+    return payload
 
 
 def build_server(
@@ -360,6 +423,7 @@ def build_server(
     config_path: Path | str | None = DEFAULT_CONFIG_PATH,
 ) -> BridgeApiServer:
     repository = FileBridgeRepository(bridge_root=Path(bridge_root))
+    repository.recover_transactions()
     context = ApiContext(
         bridge_root=repository.bridge_root,
         config_path=Path(config_path) if config_path is not None else None,

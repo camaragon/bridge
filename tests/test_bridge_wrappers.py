@@ -43,6 +43,7 @@ def test_generic_wrapper_create_uses_explicit_agent_identity(monkeypatch, capsys
             '--subject', 'API wrapper test',
             '--requested-action', 'Do the thing',
             '--minimal-context', 'Minimal context',
+            '--idempotency-key', 'wrapper-create-1',
         ],
     )
 
@@ -55,8 +56,10 @@ def test_generic_wrapper_create_uses_explicit_agent_identity(monkeypatch, capsys
     assert captured['path'] == '/v1/handoffs'
     assert 'sender' not in captured['payload']
     assert captured['payload']['recipient'] == 'agent-b'
+    assert captured['payload']['idempotency_key'] == 'wrapper-create-1'
     assert '--sender' in captured['cli_args']
     assert captured['cli_args'][captured['cli_args'].index('--sender') + 1] == 'agent-a'
+    assert captured['cli_args'][captured['cli_args'].index('--idempotency-key') + 1] == 'wrapper-create-1'
     assert payload['handoff_id'] == 'HND-TEST-001'
     assert payload['outbox'].endswith('/outgoing/agent-a/HND-TEST-001.md')
     assert payload['inbox'].endswith('/incoming/agent-b/HND-TEST-001.md')

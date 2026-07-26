@@ -248,5 +248,5 @@ def test_archive_requires_closed_status(tmp_path: Path) -> None:
         )
     )
 
-    with pytest.raises(StatusPolicyError, match="only closed handoffs can be archived"):
+    with pytest.raises(StatusPolicyError, match="only closed or cancelled handoffs can be archived"):
         service.archive_handoff(handoff.handoff_id, actor="agent-b")

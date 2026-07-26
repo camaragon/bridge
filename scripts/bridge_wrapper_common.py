@@ -109,6 +109,7 @@ def create_result(payload: dict[str, Any]) -> dict[str, Any]:
         'handoff_id': handoff_id,
         'outbox': str(root / 'outgoing' / sender / f'{handoff_id}.md'),
         'inbox': str(root / 'incoming' / recipient / f'{handoff_id}.md'),
+        'revision': int(payload.get('revision', 0)),
     }
 
 
@@ -144,6 +145,7 @@ def status_result(agent: str, handoff_id: str, payload: dict[str, Any]) -> dict[
         'actor': agent,
         'paths': paths,
         'statuses': sorted({str(payload.get('status', ''))}),
+        'revisions': [int(payload.get('revision', 0))],
     }
 
 
@@ -152,6 +154,7 @@ def set_status_result(agent: str, payload: dict[str, Any]) -> dict[str, Any]:
         'handoff_id': str(payload['handoff_id']),
         'actor': agent,
         'status': str(payload['status']),
+        'revision': int(payload.get('revision', 0)),
     }
 
 

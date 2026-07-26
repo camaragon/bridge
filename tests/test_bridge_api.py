@@ -9,7 +9,10 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from bridge_core.file_repository import FileBridgeRepository
 from bridge_core.frontmatter import parse_frontmatter
+from bridge_core.models import CreateHandoffInput
+from bridge_core.service import BridgeService
 import bridge_api_server
 import bridge_intake_watch
 
@@ -292,6 +295,41 @@ def test_create_keeps_open_handoff_when_immediate_notify_fails(api_server, monke
     assert handoff["status"] == "open"
 
 
+def test_immediate_delivery_updates_loaded_event_without_rescanning(tmp_path: Path, monkeypatch) -> None:
+    repository = FileBridgeRepository(tmp_path / "bridge")
+    service = BridgeService(repository)
+    created = service.create_handoff(
+        CreateHandoffInput(
+            sender="agent-a",
+            recipient="agent-c",
+            issue_type="task",
+            subject="Single outbox scan",
+            requested_action="Deliver once.",
+            minimal_context="Regression coverage for API-triggered delivery.",
+        )
+    )
+    context = bridge_api_server.ApiContext(
+        bridge_root=repository.bridge_root,
+        config_path=None,
+        service=service,
+    )
+    original_list_events = repository.list_events
+    scans = 0
+
+    def counted_list_events(*, states=None):
+        nonlocal scans
+        scans += 1
+        return original_list_events(states=states)
+
+    monkeypatch.setattr(repository, "list_events", counted_list_events)
+    monkeypatch.setattr(bridge_api_server, "_notify_agent", lambda *args, **kwargs: (True, "delivered"))
+
+    bridge_api_server._deliver_pending_for_handoff(context, created.handoff_id, created.revision)
+
+    assert scans == 1
+    assert original_list_events()[0].delivery_state == "delivered"
+
+
 def test_close_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -> None:
     captured_requests: list[dict[str, object]] = []
 
@@ -467,3 +505,115 @@ def test_close_keeps_status_update_when_sender_notify_fails(api_server, monkeypa
     assert status == 200
     assert fetched["status"] == "closed"
     assert fetched["resolution_summary"] == "Completed despite notify failure."
+
+
+def test_api_idempotency_conflict_returns_409(api_server) -> None:
+    body: dict[str, object] = {
+        "recipient": "agent-c",
+        "issue_type": "task",
+        "subject": "Idempotent API create",
+        "requested_action": "Create once.",
+        "minimal_context": "Concurrent-safe create.",
+    }
+    first_status, first = _request(
+        api_server["base_url"],
+        "POST",
+        "/v1/handoffs",
+        token="token-agent-a",
+        body=body,
+        extra_headers={"Idempotency-Key": "api-create-1"},
+    )
+    duplicate_status, duplicate = _request(
+        api_server["base_url"],
+        "POST",
+        "/v1/handoffs",
+        token="token-agent-a",
+        body=body,
+        extra_headers={"Idempotency-Key": "api-create-1"},
+    )
+    conflict_status, conflict = _request(
+        api_server["base_url"],
+        "POST",
+        "/v1/handoffs",
+        token="token-agent-a",
+        body={**body, "subject": "Different payload"},
+        extra_headers={"Idempotency-Key": "api-create-1"},
+    )
+
+    assert first_status == duplicate_status == 201
+    assert duplicate["handoff_id"] == first["handoff_id"]
+    assert conflict_status == 409
+    assert conflict["error"] == "idempotency_conflict"
+
+
+def test_api_if_match_stale_revision_returns_409(api_server) -> None:
+    _status, created = _request(
+        api_server["base_url"],
+        "POST",
+        "/v1/handoffs",
+        token="token-agent-a",
+        body={
+            "recipient": "agent-c",
+            "issue_type": "task",
+            "subject": "Revision API",
+            "requested_action": "Exercise optimistic concurrency.",
+            "minimal_context": "If-Match test.",
+        },
+    )
+    handoff_id = str(created["handoff_id"])
+    ack_status, acked = _request(
+        api_server["base_url"],
+        "POST",
+        f"/v1/handoffs/{handoff_id}/ack",
+        token="token-agent-c",
+        extra_headers={"If-Match": '"0"'},
+    )
+    stale_status, stale = _request(
+        api_server["base_url"],
+        "POST",
+        f"/v1/handoffs/{handoff_id}/block",
+        token="token-agent-c",
+        body={"outcome": "Stale update."},
+        extra_headers={"If-Match": '"0"'},
+    )
+
+    assert ack_status == 200
+    assert acked["revision"] == 1
+    assert stale_status == 409
+    assert stale["error"] == "revision_conflict"
+
+
+def test_api_role_authorization_rejects_sender_close_and_allows_cancel(api_server) -> None:
+    _status, created = _request(
+        api_server["base_url"],
+        "POST",
+        "/v1/handoffs",
+        token="token-agent-a",
+        body={
+            "recipient": "agent-c",
+            "issue_type": "task",
+            "subject": "Role matrix API",
+            "requested_action": "Prove role-specific lifecycle rules.",
+            "minimal_context": "Sender may cancel, not close.",
+        },
+    )
+    handoff_id = str(created["handoff_id"])
+    close_status, close_error = _request(
+        api_server["base_url"],
+        "POST",
+        f"/v1/handoffs/{handoff_id}/close",
+        token="token-agent-a",
+        body={"outcome": "Unauthorized close."},
+    )
+    cancel_status, cancelled = _request(
+        api_server["base_url"],
+        "POST",
+        f"/v1/handoffs/{handoff_id}/cancel",
+        token="token-agent-a",
+        body={"outcome": "Withdrawn safely."},
+    )
+
+    assert close_status == 403
+    assert close_error["error"] == "forbidden"
+    assert cancel_status == 200
+    assert cancelled["status"] == "cancelled"
