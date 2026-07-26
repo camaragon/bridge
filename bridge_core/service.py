@@ -18,7 +18,7 @@ from .policy import (
     require_route,
     require_status_transition,
 )
-from .repository import BridgeRepository, IdempotencyConflictError, RevisionConflictError
+from .repository import BridgeRepository, IdempotencyConflictError, RepositoryConflictError, RevisionConflictError
 
 
 class BridgeService:
@@ -39,6 +39,11 @@ class BridgeService:
         try:
             created = self.repository.create(proposed, idempotency_key=request.idempotency_key)
         except IdempotencyConflictError:
+            self.repository.complete_event(event.event_id)
+            raise
+        except RepositoryConflictError:
+            # Repository conflicts occur before this proposed handoff becomes
+            # canonical, so its prepared create event is not recoverable.
             self.repository.complete_event(event.event_id)
             raise
         except BaseException:

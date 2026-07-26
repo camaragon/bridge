@@ -379,10 +379,10 @@ def _deliver_pending_for_handoff(context: ApiContext, handoff_id: str, revision:
             event_id=event.event_id,
         )
         if ok:
-            context.service.mark_event_delivered(event.event_id)
+            context.service._mark_event_delivered(event)
         else:
-            context.service.mark_event_failed(
-                event.event_id,
+            context.service._mark_event_failed(
+                event,
                 detail,
                 max_attempts=int(os.environ.get("BRIDGE_OUTBOX_MAX_ATTEMPTS", "8")),
                 base_delay_seconds=float(os.environ.get("BRIDGE_OUTBOX_BASE_DELAY_SECONDS", "1")),

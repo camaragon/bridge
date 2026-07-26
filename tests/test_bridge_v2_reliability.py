@@ -87,6 +87,20 @@ def test_same_idempotency_key_with_different_payload_conflicts(tmp_path: Path) -
     assert list(repository.transactions_root.glob("*.json")) == []
 
 
+def test_create_conflict_removes_unrecoverable_prepared_transaction(tmp_path: Path, monkeypatch) -> None:
+    service, repository = _service(tmp_path)
+    request = _request()
+    request.idempotency_key = None
+    existing = HandoffRecord.from_create(request)
+    repository.create(existing)
+    monkeypatch.setattr(HandoffRecord, "from_create", lambda _request: existing)
+
+    with pytest.raises(RepositoryConflictError, match="handoff already exists"):
+        service.create_handoff(request)
+
+    assert list(repository.transactions_root.glob("*.json")) == []
+
+
 def test_crash_after_first_mirror_write_is_recoverable(tmp_path: Path) -> None:
     def fail_after_outgoing(stage: str) -> None:
         if stage == "after_outgoing_write":

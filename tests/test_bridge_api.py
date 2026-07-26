@@ -9,7 +9,10 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from bridge_core.file_repository import FileBridgeRepository
 from bridge_core.frontmatter import parse_frontmatter
+from bridge_core.models import CreateHandoffInput
+from bridge_core.service import BridgeService
 import bridge_api_server
 import bridge_intake_watch
 
@@ -290,6 +293,41 @@ def test_create_keeps_open_handoff_when_immediate_notify_fails(api_server, monke
     status, handoff = _request(api_server["base_url"], "GET", f"/v1/handoffs/{handoff_id}", token="token-agent-c")
     assert status == 200
     assert handoff["status"] == "open"
+
+
+def test_immediate_delivery_updates_loaded_event_without_rescanning(tmp_path: Path, monkeypatch) -> None:
+    repository = FileBridgeRepository(tmp_path / "bridge")
+    service = BridgeService(repository)
+    created = service.create_handoff(
+        CreateHandoffInput(
+            sender="agent-a",
+            recipient="agent-c",
+            issue_type="task",
+            subject="Single outbox scan",
+            requested_action="Deliver once.",
+            minimal_context="Regression coverage for API-triggered delivery.",
+        )
+    )
+    context = bridge_api_server.ApiContext(
+        bridge_root=repository.bridge_root,
+        config_path=None,
+        service=service,
+    )
+    original_list_events = repository.list_events
+    scans = 0
+
+    def counted_list_events(*, states=None):
+        nonlocal scans
+        scans += 1
+        return original_list_events(states=states)
+
+    monkeypatch.setattr(repository, "list_events", counted_list_events)
+    monkeypatch.setattr(bridge_api_server, "_notify_agent", lambda *args, **kwargs: (True, "delivered"))
+
+    bridge_api_server._deliver_pending_for_handoff(context, created.handoff_id, created.revision)
+
+    assert scans == 1
+    assert original_list_events()[0].delivery_state == "delivered"
 
 
 def test_close_notifies_sender_with_lifecycle_payload(api_server, monkeypatch) -> None:
