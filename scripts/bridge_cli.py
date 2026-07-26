@@ -191,7 +191,12 @@ def outbox_replay(args: argparse.Namespace) -> None:
 
 
 def outbox_resolve_transaction(args: argparse.Namespace) -> None:
-    event = service().resolve_transaction(args.event_id, action=args.action, reason=args.reason)
+    event = service().resolve_transaction(
+        args.event_id,
+        action=args.action,
+        reason=args.reason,
+        force_recoverable_discard=args.force_recoverable_discard,
+    )
     print(
         json.dumps(
             {"event": event.to_dict(), "action": args.action, "reason": args.reason},
@@ -323,6 +328,11 @@ def main():
     resolve_parser.add_argument("event_id")
     resolve_parser.add_argument("--action", choices=("enqueue", "discard"), required=True)
     resolve_parser.add_argument("--reason", required=True)
+    resolve_parser.add_argument(
+        "--force-recoverable-discard",
+        action="store_true",
+        help="Permit discard even when canonical state still matches and automatic recovery is safe",
+    )
     resolve_parser.set_defaults(func=outbox_resolve_transaction)
 
     rec = sub.add_parser('reconcile')

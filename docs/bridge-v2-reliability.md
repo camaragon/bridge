@@ -44,13 +44,13 @@ Canonical state is written before its idempotency index. If a process stops in t
 Before a lifecycle state commit, Bridge writes a prepared transaction journal containing the immutable event envelope. It then:
 
 1. atomically commits canonical handoff state and queue views;
-2. atomically writes the outbox event;
-3. fsync-appends audit evidence;
+2. fsync-appends audit evidence;
+3. atomically writes the outbox event;
 4. removes the prepared transaction.
 
 If a process stops after state commit but before outbox enqueue, `outbox-recover` compares the prepared event with canonical revision/status and enqueues the same `event_id`. Consumer failure never rolls back handoff state.
 
-Automatic recovery deliberately leaves a prepared event untouched when canonical state has advanced or disappeared. An operator must inspect the transaction, canonical audit history, and downstream consumer state, then explicitly resolve it with `outbox-resolve-transaction`: `enqueue` preserves at-least-once historical delivery with the original `event_id`; `discard` is only for proven duplicate/invalid transactions. Both actions require a reason and preserve resolution evidence under `audit/resolved-transactions/` before removing the journal.
+Automatic recovery deliberately leaves a prepared event untouched when canonical state has advanced or disappeared. An operator must inspect the transaction, canonical audit history, and downstream consumer state, then explicitly resolve it with `outbox-resolve-transaction`: `enqueue` preserves at-least-once historical delivery with the original `event_id`; `discard` is only for proven duplicate/invalid transactions. Bridge refuses to discard an event that still exactly matches canonical state unless the operator also supplies `--force-recoverable-discard`. Both actions require a reason and preserve canonical match evidence under `audit/resolved-transactions/` before removing the journal.
 
 Events live at `outbox/events/<event_id>.json`. State transitions are `pending` → `retrying` → `delivered` or `dead_letter`. Backoff is bounded exponential delay plus jitter. Manual replay resets attempts and scheduling but retains `event_id`.
 
@@ -143,6 +143,7 @@ python3 scripts/bridge_cli.py outbox-deliver --limit 100
 python3 scripts/bridge_cli.py outbox-replay EVT-...
 python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action enqueue --reason "verified missing delivery"
 python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action discard --reason "verified duplicate event"
+python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action discard --force-recoverable-discard --reason "verified downstream duplicate; suppress recoverable replay"
 python3 scripts/bridge_cli.py reconcile --check-only
 python3 scripts/bridge_cli.py reconcile HND-...
 ```
@@ -197,4 +198,4 @@ Rollback trigger: canonical/queue divergence that cannot be reconciled unambiguo
 - Legacy notify bodies are retained for compatibility; new adapters should consume full v2 outbox events.
 - Manual edits to queue views become conflicts against canonical state and are preserved as evidence, not merged automatically.
 - Event deduplication is an adapter responsibility keyed by `event_id`; Bridge guarantees at-least-once, not exactly-once.
-- Outbox event files are not claimed or leased. Running multiple deliverers concurrently can duplicate delivery and race delivery-state updates; deploy exactly one deliverer until a claim/lease protocol is added.
+- Outbox event files are not claimed or leased. A delivered/dead-letter state cannot be regressed by a stale failure update, but multiple deliverers can still duplicate consumer delivery; deploy exactly one deliverer until a claim/lease protocol is added.

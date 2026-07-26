@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import tempfile
 import threading
 
@@ -328,16 +329,9 @@ class FileBridgeRepository(BridgeRepository):
 
     @staticmethod
     def _safe_event_id(event_id: str) -> str:
-        normalized = event_id.strip()
-        if (
-            not normalized
-            or normalized != event_id
-            or len(normalized) > 200
-            or Path(normalized).name != normalized
-            or "\\" in normalized
-        ):
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", event_id) is None:
             raise ValueError("invalid event_id")
-        return normalized
+        return event_id
 
     def _event_path(self, event_id: str) -> Path:
         return self.events_root / f"{self._safe_event_id(event_id)}.json"
@@ -375,7 +369,14 @@ class FileBridgeRepository(BridgeRepository):
 
     def update_event(self, event: LifecycleEvent) -> LifecycleEvent:
         with self._file_lock(f"event:{event.event_id}"):
-            self._atomic_write_json(self._event_path(event.event_id), event.to_dict())
+            path = self._event_path(event.event_id)
+            if path.exists():
+                current = LifecycleEvent.from_mapping(json.loads(path.read_text(encoding="utf-8")))
+                if current.delivery_state == "delivered" and event.delivery_state != "delivered":
+                    return current
+                if current.delivery_state == "dead_letter" and event.delivery_state in {"pending", "retrying"}:
+                    return current
+            self._atomic_write_json(path, event.to_dict())
         return event
 
     def replay_event(self, event_id: str) -> LifecycleEvent:
@@ -411,10 +412,19 @@ class FileBridgeRepository(BridgeRepository):
             recovered.append(event.event_id)
         return recovered
 
-    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
+    def resolve_transaction(
+        self,
+        event_id: str,
+        *,
+        action: str,
+        reason: str,
+        force_recoverable_discard: bool = False,
+    ) -> LifecycleEvent:
         normalized_action = action.strip().lower()
         if normalized_action not in {"enqueue", "discard"}:
             raise ValueError("transaction action must be enqueue or discard")
+        if force_recoverable_discard and normalized_action != "discard":
+            raise ValueError("force_recoverable_discard is valid only for discard")
         normalized_reason = reason.strip()
         if not normalized_reason:
             raise ValueError("transaction resolution requires a reason")
@@ -428,8 +438,6 @@ class FileBridgeRepository(BridgeRepository):
                 raise RepositoryConflictError(
                     f"prepared transaction event_id mismatch: path={event_id} payload={event.event_id}"
                 )
-            if normalized_action == "enqueue":
-                self.enqueue_event(event)
             canonical_revision: int | None = None
             canonical_status: str | None = None
             try:
@@ -438,6 +446,13 @@ class FileBridgeRepository(BridgeRepository):
                 canonical_status = canonical.status
             except HandoffNotFoundError:
                 pass
+            canonical_match = canonical_revision == event.revision and canonical_status == event.status
+            if normalized_action == "discard" and canonical_match and not force_recoverable_discard:
+                raise ValueError(
+                    "prepared transaction is still recoverable; enqueue it or explicitly force recoverable discard"
+                )
+            if normalized_action == "enqueue":
+                self.enqueue_event(event)
             self._atomic_write_json(
                 self._resolved_transaction_path(event_id),
                 {
@@ -448,6 +463,8 @@ class FileBridgeRepository(BridgeRepository):
                     "resolved_at": now_iso(),
                     "canonical_revision": canonical_revision,
                     "canonical_status": canonical_status,
+                    "canonical_match": canonical_match,
+                    "force_recoverable_discard": bool(force_recoverable_discard),
                 },
             )
             self.complete_event(event_id)

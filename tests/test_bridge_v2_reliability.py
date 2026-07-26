@@ -184,6 +184,8 @@ def test_transaction_resolution_rejects_path_traversal_event_id(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="invalid event_id"):
         repository.resolve_transaction("../outside", action="discard", reason="invalid input")
+    with pytest.raises(ValueError, match="invalid event_id"):
+        repository.resolve_transaction("EVT-valid\nforged", action="discard", reason="invalid input")
 
 
 def test_transaction_resolution_rejects_payload_event_id_mismatch(tmp_path: Path) -> None:
@@ -214,17 +216,47 @@ def test_prepared_transaction_can_be_discarded_with_resolution_evidence(tmp_path
     repository._event_path(event.event_id).unlink()
     repository.prepare_event(event)
 
+    with pytest.raises(ValueError, match="still recoverable"):
+        service.resolve_transaction(
+            event.event_id,
+            action="discard",
+            reason="Must not discard a recoverable event by default.",
+        )
+    assert repository._transaction_path(event.event_id).exists()
+
     resolved = service.resolve_transaction(
         event.event_id,
         action="discard",
         reason="Verified duplicate consumer delivery; no replay required.\n- not a second audit entry",
+        force_recoverable_discard=True,
     )
 
     assert resolved.event_id == event.event_id
     assert not repository._event_path(event.event_id).exists()
     evidence = json.loads(repository._resolved_transaction_path(event.event_id).read_text(encoding="utf-8"))
     assert evidence["action"] == "discard"
+    assert evidence["canonical_match"] is True
+    assert evidence["force_recoverable_discard"] is True
     assert len(repository.audit_file.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_stale_delivery_failure_cannot_regress_delivered_event(tmp_path: Path) -> None:
+    service, repository = _service(tmp_path)
+    service.create_handoff(_request())
+    event = service.list_outbox()[0]
+    stale_copy = type(event).from_mapping(event.to_dict())
+
+    delivered = service.mark_event_delivered(event.event_id)
+    stale_result = service._mark_event_failed(
+        stale_copy,
+        "late failure from concurrent deliverer",
+        max_attempts=3,
+        base_delay_seconds=0,
+    )
+
+    assert delivered.delivery_state == "delivered"
+    assert stale_result.delivery_state == "delivered"
+    assert repository.list_events()[0].delivery_state == "delivered"
 
 
 def test_process_outbox_does_not_rescan_events_for_each_delivery(tmp_path: Path, monkeypatch) -> None:

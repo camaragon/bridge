@@ -197,8 +197,20 @@ class BridgeService:
     def replay_event(self, event_id: str) -> LifecycleEvent:
         return self.repository.replay_event(event_id)
 
-    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
-        return self.repository.resolve_transaction(event_id, action=action, reason=reason)
+    def resolve_transaction(
+        self,
+        event_id: str,
+        *,
+        action: str,
+        reason: str,
+        force_recoverable_discard: bool = False,
+    ) -> LifecycleEvent:
+        return self.repository.resolve_transaction(
+            event_id,
+            action=action,
+            reason=reason,
+            force_recoverable_discard=force_recoverable_discard,
+        )
 
     def process_outbox(
         self,

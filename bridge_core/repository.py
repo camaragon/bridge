@@ -78,5 +78,12 @@ class BridgeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
+    def resolve_transaction(
+        self,
+        event_id: str,
+        *,
+        action: str,
+        reason: str,
+        force_recoverable_discard: bool = False,
+    ) -> LifecycleEvent:
         raise NotImplementedError
