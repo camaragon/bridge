@@ -16,6 +16,7 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.models import ACTIVE_STATUSES
+from bridge_core.file_repository import FileBridgeRepository
 from bridge_core.policy import allowed_routes
 from bridge_core.runtime import discover_agents, env_key_for_agent
 from bridge_core.tooling import summarize_handoffs
@@ -293,6 +294,7 @@ def main():
     ap.add_argument('--reminder-repeat-hours', type=float, default=_float_setting('BRIDGE_PATROL_REMINDER_REPEAT_HOURS', DEFAULT_REMINDER_REPEAT_HOURS))
     ap.add_argument('--escalate-after-hours', type=float, default=_float_setting('BRIDGE_PATROL_ESCALATE_AFTER_HOURS', DEFAULT_ESCALATE_AFTER_HOURS))
     ap.add_argument('--escalate-repeat-hours', type=float, default=_float_setting('BRIDGE_PATROL_ESCALATE_REPEAT_HOURS', DEFAULT_ESCALATE_REPEAT_HOURS))
+    ap.add_argument('--outbox-pending-seconds', type=float, default=_float_setting('BRIDGE_PATROL_OUTBOX_PENDING_SECONDS', 300.0))
     args = ap.parse_args()
 
     now = datetime.now(timezone.utc)
@@ -402,6 +404,12 @@ def main():
                 warnings.append(escalation_warning)
                 state_changed = True
 
+    repository_diagnostics = FileBridgeRepository(BRIDGE, initialize=False).diagnose(
+        pending_age_seconds=max(args.outbox_pending_seconds, 0.0)
+    )
+    warnings.extend(repository_diagnostics)
+    evidence.append(f'bridge v2 diagnostics issues={len(repository_diagnostics)}')
+
     active_ids = {item.record.handoff_id for item in summarized if item.record.status in ACTIVE}
     stale_state_keys = [handoff_id for handoff_id in reminder_state if handoff_id not in active_ids]
     for handoff_id in stale_state_keys:
@@ -437,7 +445,7 @@ def main():
         print(f'- ... ({len(checks) - 12} more checks)')
     print('actions_taken:')
     print('- scanned bridge directories, markdown files, and incoming handoffs')
-    print('- checked route policy, Bridge API health, service state, file permission posture, active handoff aging, and unresolved-handoff reminders')
+    print('- checked route policy, Bridge API health, service state, file permission posture, mirrors/revisions, outbox, idempotency indexes, active handoff aging, and unresolved-handoff reminders')
     print('evidence:')
     for item in evidence:
         print(f'- {item}')

@@ -34,6 +34,9 @@ def main() -> None:
     create_parser.add_argument('--related-path', action='append')
     create_parser.add_argument('--approval-needed', action='store_true')
     create_parser.add_argument('--approval-context', default='')
+    create_parser.add_argument('--idempotency-key')
+    create_parser.add_argument('--correlation-id')
+    create_parser.add_argument('--causation-id')
 
     sub.add_parser('list-open')
 
@@ -42,22 +45,32 @@ def main() -> None:
 
     update_parser = sub.add_parser('set-status')
     update_parser.add_argument('handoff_id')
-    update_parser.add_argument('status', choices=['open', 'acknowledged', 'in_progress', 'blocked', 'closed'])
+    update_parser.add_argument('status', choices=['open', 'acknowledged', 'in_progress', 'blocked', 'closed', 'cancelled'])
     update_parser.add_argument('--outcome', default='')
+    update_parser.add_argument('--expected-revision', type=int)
 
     ack_parser = sub.add_parser('ack')
     ack_parser.add_argument('handoff_id')
+    ack_parser.add_argument('--expected-revision', type=int)
 
     block_parser = sub.add_parser('block')
     block_parser.add_argument('handoff_id')
     block_parser.add_argument('--outcome', required=True)
+    block_parser.add_argument('--expected-revision', type=int)
 
     close_parser = sub.add_parser('close')
     close_parser.add_argument('handoff_id')
     close_parser.add_argument('--outcome', required=True)
+    close_parser.add_argument('--expected-revision', type=int)
+
+    cancel_parser = sub.add_parser('cancel')
+    cancel_parser.add_argument('handoff_id')
+    cancel_parser.add_argument('--reason', required=True)
+    cancel_parser.add_argument('--expected-revision', type=int)
 
     archive_parser = sub.add_parser('archive')
     archive_parser.add_argument('handoff_id')
+    archive_parser.add_argument('--expected-revision', type=int)
 
     args = parser.parse_args()
     agent = normalize_agent_id(args.agent)
@@ -78,6 +91,9 @@ def main() -> None:
             'related_paths': args.related_path or [],
             'approval_needed': args.approval_needed,
             'approval_context': args.approval_context,
+            'idempotency_key': args.idempotency_key,
+            'correlation_id': args.correlation_id,
+            'causation_id': args.causation_id,
         }
         cli_args = [
             'create', '--sender', agent, '--recipient', payload['recipient'], '--issue-type', args.issue_type,
@@ -95,25 +111,56 @@ def main() -> None:
             cli_args += ['--approval-context', args.approval_context]
         for path in args.related_path or []:
             cli_args += ['--related-path', path]
+        for option, value in (
+            ('--idempotency-key', args.idempotency_key),
+            ('--correlation-id', args.correlation_id),
+            ('--causation-id', args.causation_id),
+        ):
+            if value:
+                cli_args += [option, value]
         invoke(agent, args, api_call=lambda: create_result(api_request(agent, 'POST', '/v1/handoffs', payload=payload)), cli_args=cli_args)
     elif args.cmd == 'list-open':
         invoke(agent, args, api_call=lambda: list_result(agent, api_request(agent, 'GET', '/v1/handoffs?active_only=true')), cli_args=['list-open', '--agent', agent])
     elif args.cmd == 'status':
         invoke(agent, args, api_call=lambda: status_result(agent, args.handoff_id, api_request(agent, 'GET', f'/v1/handoffs/{args.handoff_id}')), cli_args=['status', '--actor', agent, args.handoff_id])
     elif args.cmd == 'set-status':
-        payload = {'status': args.status, 'outcome': args.outcome}
+        payload = {'status': args.status, 'outcome': args.outcome, 'expected_revision': args.expected_revision}
         cli_args = ['set-status', '--actor', agent, args.handoff_id, args.status]
         if args.outcome:
             cli_args += ['--outcome', args.outcome]
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
         invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/status', payload=payload)), cli_args=cli_args)
     elif args.cmd == 'ack':
-        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/ack', payload={})), cli_args=['set-status', '--actor', agent, args.handoff_id, 'acknowledged'])
+        payload = {'expected_revision': args.expected_revision}
+        cli_args = ['set-status', '--actor', agent, args.handoff_id, 'acknowledged']
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
+        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/ack', payload=payload)), cli_args=cli_args)
     elif args.cmd == 'block':
-        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/block', payload={'outcome': args.outcome})), cli_args=['set-status', '--actor', agent, args.handoff_id, 'blocked', '--outcome', args.outcome])
+        payload = {'outcome': args.outcome, 'expected_revision': args.expected_revision}
+        cli_args = ['set-status', '--actor', agent, args.handoff_id, 'blocked', '--outcome', args.outcome]
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
+        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/block', payload=payload)), cli_args=cli_args)
     elif args.cmd == 'close':
-        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/close', payload={'outcome': args.outcome})), cli_args=['set-status', '--actor', agent, args.handoff_id, 'closed', '--outcome', args.outcome])
+        payload = {'outcome': args.outcome, 'expected_revision': args.expected_revision}
+        cli_args = ['set-status', '--actor', agent, args.handoff_id, 'closed', '--outcome', args.outcome]
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
+        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/close', payload=payload)), cli_args=cli_args)
+    elif args.cmd == 'cancel':
+        payload = {'outcome': args.reason, 'expected_revision': args.expected_revision}
+        cli_args = ['set-status', '--actor', agent, args.handoff_id, 'cancelled', '--outcome', args.reason]
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
+        invoke(agent, args, api_call=lambda: set_status_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/cancel', payload=payload)), cli_args=cli_args)
     elif args.cmd == 'archive':
-        invoke(agent, args, api_call=lambda: archive_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/archive', payload={})), cli_args=['archive', '--actor', agent, args.handoff_id])
+        payload = {'expected_revision': args.expected_revision}
+        cli_args = ['archive', '--actor', agent, args.handoff_id]
+        if args.expected_revision is not None:
+            cli_args += ['--expected-revision', str(args.expected_revision)]
+        invoke(agent, args, api_call=lambda: archive_result(agent, api_request(agent, 'POST', f'/v1/handoffs/{args.handoff_id}/archive', payload=payload)), cli_args=cli_args)
 
 
 if __name__ == '__main__':

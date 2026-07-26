@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 from pathlib import Path
 import sys
 import threading
@@ -321,6 +322,25 @@ def test_intake_once_dry_run_reports_without_mutating(api_server, monkeypatch) -
     status, payload = _request(api_server['base_url'], 'GET', f'/v1/handoffs/{handoff_id}', token='token-agent-c')
     assert status == 200
     assert payload['status'] == 'open'
+
+
+def test_notify_send_json_ignores_client_disconnect() -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class BrokenPipeWriter:
+        def write(self, _data: bytes) -> None:
+            raise BrokenPipeError('client closed')
+
+    handler = object.__new__(bridge_intake_watch.IntakeNotifyHandler)
+    handler.wfile = BrokenPipeWriter()
+    handler.send_response = lambda status: calls.append(('response', status))
+    handler.send_header = lambda name, value: calls.append(('header', name, value))
+    handler.end_headers = lambda: calls.append(('end_headers', None))
+
+    handler._send_json(HTTPStatus.OK, {'ok': True})
+
+    assert calls[0] == ('response', 200)
+    assert calls[-1] == ('end_headers', None)
 
 
 def test_notify_server_acknowledges_open_handoff(api_server, monkeypatch) -> None:

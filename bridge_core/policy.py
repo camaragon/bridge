@@ -5,11 +5,12 @@ from .runtime import configured_routes, normalize_agent_id
 
 STATUS_ALIASES = {"acked": "acknowledged"}
 STATUS_TRANSITIONS = {
-    "open": {"open", "acknowledged", "in_progress", "blocked", "closed"},
-    "acknowledged": {"acknowledged", "in_progress", "blocked", "closed"},
-    "in_progress": {"in_progress", "blocked", "closed", "acknowledged"},
-    "blocked": {"blocked", "in_progress", "closed", "acknowledged"},
+    "open": {"open", "acknowledged", "in_progress", "blocked", "closed", "cancelled"},
+    "acknowledged": {"acknowledged", "in_progress", "blocked", "closed", "cancelled"},
+    "in_progress": {"in_progress", "blocked", "closed", "acknowledged", "cancelled"},
+    "blocked": {"blocked", "in_progress", "closed", "acknowledged", "cancelled"},
     "closed": {"closed", "archived"},
+    "cancelled": {"cancelled", "archived"},
     "archived": {"archived"},
 }
 
@@ -75,6 +76,20 @@ def require_status_transition(current: str, new: str, *, has_resolution_summary:
     if new_normalized == "closed" and not has_resolution_summary:
         raise StatusPolicyError("closing a handoff requires resolution summary")
     return new_normalized
+
+
+def require_lifecycle_role(*, actor: str, sender: str, recipient: str, new_status: str, maintenance: bool = False) -> None:
+    if maintenance:
+        return
+    require_actor_access(actor, sender, recipient)
+    normalized = normalize_status(new_status)
+    if actor == recipient and normalized in {"acknowledged", "in_progress", "blocked", "closed", "archived"}:
+        return
+    if actor == sender and normalized == "cancelled":
+        return
+    if normalized in {"open"} and actor == sender:
+        return
+    raise AccessPolicyError(f"actor {actor} is not authorized to set {normalized} for this handoff")
 
 
 def is_active_status(status: str) -> bool:

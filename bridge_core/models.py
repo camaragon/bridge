@@ -4,10 +4,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
+import hashlib
+import json
 import random
 
+CURRENT_SCHEMA_VERSION = 2
 ACTIVE_STATUSES = {"open", "acknowledged", "in_progress", "blocked"}
-ALL_STATUSES = ACTIVE_STATUSES | {"closed", "archived"}
+ALL_STATUSES = ACTIVE_STATUSES | {"closed", "cancelled", "archived"}
 HANDOFF_KINDS = {"incident", "request", "question", "result"}
 PRIORITIES = {"low", "medium", "high", "urgent"}
 RISK_LEVELS = {"low", "medium", "high"}
@@ -41,6 +44,9 @@ class CreateHandoffInput:
     response_format: str = DEFAULT_RESPONSE_FORMAT
     related_paths: Sequence[str] = field(default_factory=list)
     constraints: str = "- none"
+    idempotency_key: str | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
 
     def validate(self) -> None:
         if self.handoff_kind not in HANDOFF_KINDS:
@@ -49,6 +55,31 @@ class CreateHandoffInput:
             raise ValueError(f"invalid priority: {self.priority}")
         if self.risk_level not in RISK_LEVELS:
             raise ValueError(f"invalid risk_level: {self.risk_level}")
+        if self.idempotency_key is not None and not self.idempotency_key.strip():
+            raise ValueError("idempotency_key must not be empty")
+
+    def canonical_request_hash(self) -> str:
+        payload = {
+            "sender": self.sender,
+            "recipient": self.recipient,
+            "issue_type": self.issue_type,
+            "subject": self.subject,
+            "requested_action": self.requested_action,
+            "minimal_context": self.minimal_context,
+            "handoff_kind": self.handoff_kind,
+            "priority": self.priority,
+            "risk_level": self.risk_level,
+            "due_at": self.due_at or "none",
+            "approval_needed": bool(self.approval_needed),
+            "approval_context": self.approval_context or "none",
+            "response_format": self.response_format,
+            "related_paths": list(self.related_paths),
+            "constraints": self.constraints or "- none",
+            "correlation_id": self.correlation_id,
+            "causation_id": self.causation_id,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(slots=True)
@@ -73,6 +104,12 @@ class HandoffRecord:
     response_format: str = DEFAULT_RESPONSE_FORMAT
     related_paths: list[str] = field(default_factory=list)
     body: str = ""
+    schema_version: int = CURRENT_SCHEMA_VERSION
+    revision: int = 0
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    canonical_request_hash: str = ""
+    idempotency_key_hash: str = ""
 
     @classmethod
     def from_create(cls, data: CreateHandoffInput) -> "HandoffRecord":
@@ -99,6 +136,11 @@ class HandoffRecord:
             response_format=data.response_format,
             related_paths=list(data.related_paths),
             body=render_body(data.requested_action, data.minimal_context, data.constraints),
+            schema_version=CURRENT_SCHEMA_VERSION,
+            revision=0,
+            correlation_id=data.correlation_id,
+            causation_id=data.causation_id,
+            canonical_request_hash=data.canonical_request_hash(),
         )
 
     @classmethod
@@ -124,10 +166,18 @@ class HandoffRecord:
             response_format=str(mapping.get("response_format", DEFAULT_RESPONSE_FORMAT) or DEFAULT_RESPONSE_FORMAT),
             related_paths=[str(item) for item in mapping.get("related_paths", [])],
             body=body,
+            schema_version=int(str(mapping.get("schema_version", 1) or 1)),
+            revision=int(str(mapping.get("revision", 0) or 0)),
+            correlation_id=_optional_string(mapping.get("correlation_id")),
+            causation_id=_optional_string(mapping.get("causation_id")),
+            canonical_request_hash=str(mapping.get("canonical_request_hash", "") or ""),
+            idempotency_key_hash=str(mapping.get("idempotency_key_hash", "") or ""),
         )
 
     def to_frontmatter(self) -> dict[str, object]:
         return {
+            "schema_version": self.schema_version,
+            "revision": self.revision,
             "handoff_id": self.handoff_id,
             "status": self.status,
             "created_at": self.created_at,
@@ -147,6 +197,10 @@ class HandoffRecord:
             "subject": self.subject,
             "response_format": self.response_format,
             "related_paths": list(self.related_paths),
+            "correlation_id": self.correlation_id or "none",
+            "causation_id": self.causation_id or "none",
+            "canonical_request_hash": self.canonical_request_hash,
+            "idempotency_key_hash": self.idempotency_key_hash,
         }
 
 
@@ -154,6 +208,11 @@ class HandoffRecord:
 class StoredHandoff:
     path: Path
     record: HandoffRecord
+
+
+def _optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return None if normalized in {"", "none"} else normalized
 
 
 def render_body(requested_action: str, minimal_context: str, constraints: str) -> str:

@@ -6,8 +6,13 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
 
 from bridge_core.runtime import TOKEN_ENV_PREFIX, normalize_agent_env_suffix
 

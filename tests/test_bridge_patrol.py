@@ -9,7 +9,9 @@ import threading
 
 import bridge_patrol
 from bridge_core.frontmatter import dump_document
-from bridge_core.models import HandoffRecord
+from bridge_core.models import CreateHandoffInput, HandoffRecord
+from bridge_core.file_repository import FileBridgeRepository
+from bridge_core.service import BridgeService
 
 
 class _NotifyCaptureServer(ThreadingHTTPServer):
@@ -129,8 +131,12 @@ def _write_handoff(
         body='## Requested Action\nAck it\n\n## Minimal Context\nTest\n\n## Constraints\n- none\n\n## Outcome\n- pending\n',
     )
     path = bridge / 'incoming' / recipient / f'{handoff_id}.md'
-    path.write_text(dump_document(record.to_frontmatter(), record.body), encoding='utf-8')
+    document = dump_document(record.to_frontmatter(), record.body)
+    path.write_text(document, encoding='utf-8')
     path.chmod(0o600)
+    outgoing = bridge / 'outgoing' / record.sender / f'{handoff_id}.md'
+    outgoing.write_text(document, encoding='utf-8')
+    outgoing.chmod(0o600)
     return path
 
 
@@ -321,3 +327,39 @@ def test_patrol_skips_active_alert_when_summary_is_actionable(tmp_path: Path, mo
 
     assert 'active unresolved handoff for agent-c: HND-TEST-0006' not in out
     assert 'status: ok' in out
+
+
+def test_patrol_detects_v2_mirror_outbox_and_idempotency_drift(tmp_path: Path, monkeypatch, capsys) -> None:
+    _root, bridge, _config = _setup_patrol_root(tmp_path, monkeypatch)
+    repository = FileBridgeRepository(bridge)
+    service = BridgeService(repository)
+    record = service.create_handoff(
+        CreateHandoffInput(
+            sender='agent-a',
+            recipient='agent-c',
+            issue_type='task',
+            subject='V2 patrol drift',
+            requested_action='Detect all drift.',
+            minimal_context='Patrol regression.',
+            idempotency_key='patrol-v2-1',
+        )
+    )
+    (bridge / 'incoming' / 'agent-c' / f'{record.handoff_id}.md').unlink()
+    event = service.list_outbox()[0]
+    service.mark_event_failed(event.event_id, 'consumer down', max_attempts=1)
+    index_path = next(repository.idempotency_root.glob('*/*.json'))
+    index = json.loads(index_path.read_text(encoding='utf-8'))
+    index['request_hash'] = 'inconsistent'
+    index_path.write_text(json.dumps(index), encoding='utf-8')
+    index_path.chmod(0o600)
+
+    monkeypatch.setattr(bridge_patrol, 'check_systemd_service', lambda unit: ('ok', f'{unit} active'))
+    monkeypatch.setattr(bridge_patrol, 'check_api_health', lambda url: ('ok', f'bridge API health ok at {url}'))
+    monkeypatch.setattr('sys.argv', ['bridge_patrol.py', '--reminder-after-hours', '99', '--escalate-after-hours', '99'])
+    bridge_patrol.main()
+    out = capsys.readouterr().out
+
+    assert 'status: warning' in out
+    assert 'missing mirror incoming/agent-c/' in out
+    assert 'dead-letter event' in out
+    assert 'idempotency index inconsistency' in out
