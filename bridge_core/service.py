@@ -211,11 +211,11 @@ class BridgeService:
         for event in due[: max(0, limit)]:
             ok, detail = deliver(event)
             if ok:
-                processed.append(self.mark_event_delivered(event.event_id))
+                processed.append(self._mark_event_delivered(event))
             else:
                 processed.append(
-                    self.mark_event_failed(
-                        event.event_id,
+                    self._mark_event_failed(
+                        event,
                         detail,
                         max_attempts=max_attempts,
                         base_delay_seconds=base_delay_seconds,
@@ -226,6 +226,9 @@ class BridgeService:
 
     def mark_event_delivered(self, event_id: str) -> LifecycleEvent:
         event = self._event(event_id)
+        return self._mark_event_delivered(event)
+
+    def _mark_event_delivered(self, event: LifecycleEvent) -> LifecycleEvent:
         event.delivery_state = "delivered"
         event.last_error = ""
         return self.repository.update_event(event)
@@ -241,6 +244,25 @@ class BridgeService:
         jitter_ratio: float = 0.2,
     ) -> LifecycleEvent:
         event = self._event(event_id)
+        return self._mark_event_failed(
+            event,
+            error,
+            max_attempts=max_attempts,
+            base_delay_seconds=base_delay_seconds,
+            max_delay_seconds=max_delay_seconds,
+            jitter_ratio=jitter_ratio,
+        )
+
+    def _mark_event_failed(
+        self,
+        event: LifecycleEvent,
+        error: str,
+        *,
+        max_attempts: int = 8,
+        base_delay_seconds: float = 1.0,
+        max_delay_seconds: float = 300.0,
+        jitter_ratio: float = 0.2,
+    ) -> LifecycleEvent:
         event.attempts += 1
         event.last_error = error.strip()[:1000]
         if event.attempts >= max(1, max_attempts):

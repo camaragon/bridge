@@ -341,10 +341,11 @@ class FileBridgeRepository(BridgeRepository):
                 record = self.load_records(event.handoff_id)[0].record
             except HandoffNotFoundError:
                 continue
-            if record.revision >= event.revision or record.status == event.status:
-                self.enqueue_event(event)
-                self.complete_event(event.event_id)
-                recovered.append(event.event_id)
+            if record.revision != event.revision or record.status != event.status:
+                continue
+            self.enqueue_event(event)
+            self.complete_event(event.event_id)
+            recovered.append(event.event_id)
         return recovered
 
     def _preserve_conflict(self, path: Path, *, reason: str) -> Path:

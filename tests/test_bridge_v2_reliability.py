@@ -73,6 +73,42 @@ def test_crash_after_first_mirror_write_is_recoverable(tmp_path: Path) -> None:
     assert repository.list_events()[0].event_id == recovered_event_ids[0]
 
 
+def test_recovery_does_not_enqueue_stale_prepared_event(tmp_path: Path) -> None:
+    service, repository = _service(tmp_path)
+    created = service.create_handoff(_request())
+    created_event = service.list_outbox()[0]
+    repository.complete_event(created_event.event_id)
+    event_path = repository._event_path(created_event.event_id)
+    event_path.unlink()
+    repository.prepare_event(created_event)
+
+    service.set_status(created.handoff_id, actor="agent-b", status="acknowledged", expected_revision=0)
+
+    assert repository.recover_transactions() == []
+    assert not event_path.exists()
+    assert (repository.transactions_root / f"{created_event.event_id}.json").exists()
+
+
+def test_process_outbox_does_not_rescan_events_for_each_delivery(tmp_path: Path, monkeypatch) -> None:
+    service, repository = _service(tmp_path)
+    for index in range(4):
+        service.create_handoff(_request(key=f"batch-{index}", subject=f"Batch {index}"))
+
+    original_list_events = repository.list_events
+    calls = 0
+
+    def counted_list_events(*, states=None):
+        nonlocal calls
+        calls += 1
+        return original_list_events(states=states)
+
+    monkeypatch.setattr(repository, "list_events", counted_list_events)
+    processed = service.process_outbox(lambda _event: (True, "ok"))
+
+    assert len(processed) == 4
+    assert calls == 1
+
+
 def test_status_update_leaves_queue_views_at_same_revision(tmp_path: Path) -> None:
     service, repository = _service(tmp_path)
     created = service.create_handoff(_request())
