@@ -170,7 +170,7 @@ class BridgeService:
                 )
             statuses = {normalize_status(item.record.status) for item in records}
             if not statuses <= {"closed", "cancelled"}:
-                raise StatusPolicyError("only closed handoffs can be archived (or cancelled handoffs via maintenance recovery)")
+                raise StatusPolicyError("only closed or cancelled handoffs can be archived")
             archived = self._mutate_records(
                 records,
                 "archived",
@@ -196,6 +196,9 @@ class BridgeService:
 
     def replay_event(self, event_id: str) -> LifecycleEvent:
         return self.repository.replay_event(event_id)
+
+    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
+        return self.repository.resolve_transaction(event_id, action=action, reason=reason)
 
     def process_outbox(
         self,

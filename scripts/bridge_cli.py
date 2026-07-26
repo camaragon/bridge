@@ -185,9 +185,20 @@ def outbox_list(args):
     print(json.dumps([event.to_dict() for event in service().list_outbox(states=states)], indent=2, sort_keys=True))
 
 
-def outbox_replay(args):
+def outbox_replay(args: argparse.Namespace) -> None:
     event = service().replay_event(args.event_id)
     print(json.dumps(event.to_dict(), indent=2, sort_keys=True))
+
+
+def outbox_resolve_transaction(args: argparse.Namespace) -> None:
+    event = service().resolve_transaction(args.event_id, action=args.action, reason=args.reason)
+    print(
+        json.dumps(
+            {"event": event.to_dict(), "action": args.action, "reason": args.reason},
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def reconcile(args):
@@ -301,9 +312,18 @@ def main():
     ol.add_argument('--state', action='append', choices=['pending', 'retrying', 'delivered', 'dead_letter'])
     ol.set_defaults(func=outbox_list)
 
-    replay = sub.add_parser('outbox-replay')
-    replay.add_argument('event_id')
-    replay.set_defaults(func=outbox_replay)
+    replay_parser = sub.add_parser("outbox-replay", help="Replay an event without changing its event ID")
+    replay_parser.add_argument("event_id")
+    replay_parser.set_defaults(func=outbox_replay)
+
+    resolve_parser = sub.add_parser(
+        "outbox-resolve-transaction",
+        help="Explicitly enqueue or discard a prepared transaction with audit evidence",
+    )
+    resolve_parser.add_argument("event_id")
+    resolve_parser.add_argument("--action", choices=("enqueue", "discard"), required=True)
+    resolve_parser.add_argument("--reason", required=True)
+    resolve_parser.set_defaults(func=outbox_resolve_transaction)
 
     rec = sub.add_parser('reconcile')
     rec.add_argument('handoff_id', nargs='?')

@@ -114,8 +114,26 @@ def test_archive_requires_closed_status(bridge_sandbox, capsys):
     assert outgoing.exists()
     assert incoming.exists()
 
-    with pytest.raises(SystemExit, match='only closed handoffs can be archived'):
+    with pytest.raises(SystemExit, match='only closed or cancelled handoffs can be archived'):
         bridge_cli.archive(Namespace(actor='agent-c', handoff_id=handoff_id))
+
+
+def test_recipient_can_archive_sender_cancelled_handoff(bridge_sandbox, capsys):
+    handoff_id = _create_handoff(capsys)
+    bridge_cli.set_status(
+        Namespace(
+            actor='agent-a',
+            handoff_id=handoff_id,
+            status='cancelled',
+            outcome='Request withdrawn by sender.',
+        )
+    )
+    capsys.readouterr()
+
+    bridge_cli.archive(Namespace(actor='agent-c', handoff_id=handoff_id))
+    archive_result = json.loads(capsys.readouterr().out)
+
+    assert Path(archive_result['archive_dir']).exists()
 
 
 def test_relocated_bridge_cli_uses_repo_relative_root(tmp_path):

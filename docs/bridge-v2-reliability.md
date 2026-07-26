@@ -27,6 +27,8 @@ The canonical record is authoritative. Record writes use a same-directory tempor
 
 A create writes canonical state before queue views. If the process stops after one view, `reconcile` rebuilds the missing view from canonical evidence. A conflicting view is copied to `audit/conflicts/`, an audit event is appended, and only then may the view be replaced. Ambiguous v1 conflicts without canonical evidence are never auto-selected.
 
+Two byte-identical v1 queue copies without a canonical record are unambiguous legacy state, not divergence. Check-only reconciliation leaves them quiet. Repair mode materializes the v2 canonical record and rewrites both queue views to the canonical v2 representation without creating false conflict evidence. Non-identical v1 copies remain an operator decision.
+
 ### Idempotent create
 
 Clients may send `Idempotency-Key` or `idempotency_key`. The key is scoped to the authenticated sender. Bridge stores only its SHA-256 digest in `idempotency/<sender>/`; it stores a canonical request SHA-256 over material request fields. The raw key is not written.
@@ -34,6 +36,8 @@ Clients may send `Idempotency-Key` or `idempotency_key`. The key is scoped to th
 - same sender + key + canonical payload: return the original handoff;
 - same sender + key + materially different payload: conflict (`HTTP 409`);
 - concurrent identical requests: serialized by the sender/key lock and produce one handoff.
+
+Canonical state is written before its idempotency index. If a process stops in that interval, a retry under the same sender/key lock scans canonical records for the stored key digest, validates the canonical request hash, rebuilds the missing index, repairs queue views, and returns the original handoff. Multiple canonical claims for one sender/key digest fail closed as a repository conflict.
 
 ### Lifecycle transactions and outbox
 
@@ -45,6 +49,8 @@ Before a lifecycle state commit, Bridge writes a prepared transaction journal co
 4. removes the prepared transaction.
 
 If a process stops after state commit but before outbox enqueue, `outbox-recover` compares the prepared event with canonical revision/status and enqueues the same `event_id`. Consumer failure never rolls back handoff state.
+
+Automatic recovery deliberately leaves a prepared event untouched when canonical state has advanced or disappeared. An operator must inspect the transaction, canonical audit history, and downstream consumer state, then explicitly resolve it with `outbox-resolve-transaction`: `enqueue` preserves at-least-once historical delivery with the original `event_id`; `discard` is only for proven duplicate/invalid transactions. Both actions require a reason and preserve resolution evidence under `audit/resolved-transactions/` before removing the journal.
 
 Events live at `outbox/events/<event_id>.json`. State transitions are `pending` → `retrying` → `delivered` or `dead_letter`. Backoff is bounded exponential delay plus jitter. Manual replay resets attempts and scheduling but retains `event_id`.
 
@@ -107,7 +113,7 @@ A repeated same-state request is a no-op when its outcome is empty or exactly ma
 | block | no | yes | recovery override |
 | close with verified outcome | no | yes | recovery override |
 | cancel/withdraw with reason | yes | no | recovery override |
-| archive closed handoff | no | yes | recovery override |
+| archive closed or sender-cancelled handoff | no | yes | recovery override |
 
 The API exposes no maintenance override. The service-layer `maintenance=True` path is deliberately explicit for offline host recovery tooling and must not be granted through participant tokens.
 
@@ -135,6 +141,8 @@ python3 scripts/bridge_cli.py outbox-list --state dead_letter
 python3 scripts/bridge_cli.py outbox-recover
 python3 scripts/bridge_cli.py outbox-deliver --limit 100
 python3 scripts/bridge_cli.py outbox-replay EVT-...
+python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action enqueue --reason "verified missing delivery"
+python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action discard --reason "verified duplicate event"
 python3 scripts/bridge_cli.py reconcile --check-only
 python3 scripts/bridge_cli.py reconcile HND-...
 ```
@@ -144,15 +152,15 @@ python3 scripts/bridge_cli.py reconcile HND-...
 ## Backward-compatible migration plan
 
 1. Deploy code without changing live data.
-2. Run compile/tests and `reconcile --check-only` against a copied Bridge root.
+2. Run compile/tests and `reconcile --check-only` against a copied Bridge root. Identical v1 mirror pairs should not be reported as divergent.
 3. Back up the live Bridge root with metadata and verify the backup can be listed/read.
 4. Stop API/intake writers during the separately approved maintenance window.
 5. Run `outbox-recover`, then `reconcile --check-only` on live data.
 6. Resolve ambiguous divergent v1 copies manually; do not select by timestamp alone.
-7. Run `reconcile` to lazily materialize canonical records and missing views.
+7. Run `reconcile` to lazily materialize canonical records and missing views. Verify identical v1 pairs migrate without conflict evidence.
 8. Start the API, then run one bounded `outbox-deliver` pass.
 9. Verify health, patrol, route/token authorization, open handoff counts, outbox/dead-letter counts, and one isolated synthetic route approved for the maintenance window.
-10. Add a separately approved periodic invocation of `outbox-recover` + `outbox-deliver`; do not treat the API fast path as the retry scheduler.
+10. Add one separately approved periodic invocation of `outbox-recover` + `outbox-deliver`; do not treat the API fast path as the retry scheduler. Enforce a single active deliverer with the service manager or an external lock.
 
 No bulk rewrite is required. Untouched v1 handoffs continue to load.
 
@@ -189,3 +197,4 @@ Rollback trigger: canonical/queue divergence that cannot be reconciled unambiguo
 - Legacy notify bodies are retained for compatibility; new adapters should consume full v2 outbox events.
 - Manual edits to queue views become conflicts against canonical state and are preserved as evidence, not merged automatically.
 - Event deduplication is an adapter responsibility keyed by `event_id`; Bridge guarantees at-least-once, not exactly-once.
+- Outbox event files are not claimed or leased. Running multiple deliverers concurrently can duplicate delivery and race delivery-state updates; deploy exactly one deliverer until a claim/lease protocol is added.

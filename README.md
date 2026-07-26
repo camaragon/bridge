@@ -201,6 +201,7 @@ python3 scripts/bridge_cli.py outbox-list --state pending
 python3 scripts/bridge_cli.py outbox-deliver --limit 100
 python3 scripts/bridge_cli.py outbox-replay EVT-...
 python3 scripts/bridge_cli.py outbox-recover
+python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action enqueue --reason "verified missing delivery"
 python3 scripts/bridge_cli.py reconcile --check-only
 ```
 

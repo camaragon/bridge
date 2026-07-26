@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Iterator
 import fcntl
@@ -39,6 +38,7 @@ class FileBridgeRepository(BridgeRepository):
         self.idempotency_root = self.bridge_root / "idempotency"
         self.events_root = self.bridge_root / "outbox" / "events"
         self.transactions_root = self.bridge_root / "transactions"
+        self.resolved_transactions_root = self.bridge_root / "audit" / "resolved-transactions"
         self.conflicts_root = self.bridge_root / "audit" / "conflicts"
         self._fault_injector = fault_injector
         self._thread_locks: dict[str, threading.RLock] = {}
@@ -58,6 +58,7 @@ class FileBridgeRepository(BridgeRepository):
             self.idempotency_root,
             self.events_root,
             self.transactions_root,
+            self.resolved_transactions_root,
             self.conflicts_root,
         ):
             path.mkdir(parents=True, exist_ok=True)
@@ -149,6 +150,48 @@ class FileBridgeRepository(BridgeRepository):
     def _idempotency_index_path(self, sender: str, key_hash: str) -> Path:
         return self.idempotency_root / sender / f"{key_hash}.json"
 
+    def _write_idempotency_index(self, handoff: HandoffRecord, key_hash: str) -> None:
+        self._atomic_write_json(
+            self._idempotency_index_path(handoff.sender, key_hash),
+            {
+                "schema_version": CURRENT_SCHEMA_VERSION,
+                "sender": handoff.sender,
+                "idempotency_key_hash": key_hash,
+                "request_hash": handoff.canonical_request_hash,
+                "handoff_id": handoff.handoff_id,
+                "created_at": handoff.created_at,
+            },
+        )
+
+    def _recover_idempotency_index(
+        self,
+        *,
+        sender: str,
+        key_hash: str,
+        request_hash: str,
+    ) -> HandoffRecord | None:
+        matches: list[HandoffRecord] = []
+        for path in sorted(self.records_root.glob("*.md")):
+            if key_hash not in path.read_text(encoding="utf-8", errors="replace"):
+                continue
+            record = self._load_path(path).record
+            if record.sender == sender and record.idempotency_key_hash == key_hash:
+                matches.append(record)
+        if len(matches) > 1:
+            raise RepositoryConflictError(
+                f"multiple canonical handoffs claim idempotency key for {sender}: {key_hash}"
+            )
+        if not matches:
+            return None
+        recovered = matches[0]
+        if recovered.canonical_request_hash != request_hash:
+            raise IdempotencyConflictError(
+                f"idempotency key already used by {sender} with a different request payload"
+            )
+        self._write_idempotency_index(recovered, key_hash)
+        self.reconcile_handoff(recovered.handoff_id, repair=True)
+        return self.load_records(recovered.handoff_id)[0].record
+
     def create(self, handoff: HandoffRecord, *, idempotency_key: str | None = None) -> HandoffRecord:
         key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest() if idempotency_key else ""
         create_lock = f"idempotency:{handoff.sender}:{key_hash}" if key_hash else f"create:{handoff.handoff_id}"
@@ -164,6 +207,13 @@ class FileBridgeRepository(BridgeRepository):
                     original_id = str(index["handoff_id"])
                     self.reconcile_handoff(original_id)
                     return self.load_records(original_id)[0].record
+                recovered = self._recover_idempotency_index(
+                    sender=handoff.sender,
+                    key_hash=key_hash,
+                    request_hash=handoff.canonical_request_hash,
+                )
+                if recovered is not None:
+                    return recovered
                 handoff.idempotency_key_hash = key_hash
 
             with self.handoff_lock(handoff.handoff_id):
@@ -172,17 +222,7 @@ class FileBridgeRepository(BridgeRepository):
                     raise RepositoryConflictError(f"handoff already exists: {handoff.handoff_id}")
                 self._write_record(canonical, handoff)
                 if key_hash:
-                    self._atomic_write_json(
-                        self._idempotency_index_path(handoff.sender, key_hash),
-                        {
-                            "schema_version": CURRENT_SCHEMA_VERSION,
-                            "sender": handoff.sender,
-                            "idempotency_key_hash": key_hash,
-                            "request_hash": handoff.canonical_request_hash,
-                            "handoff_id": handoff.handoff_id,
-                            "created_at": handoff.created_at,
-                        },
-                    )
+                    self._write_idempotency_index(handoff, key_hash)
                 outgoing = self._queue_path("outgoing", handoff.sender, handoff.handoff_id)
                 incoming = self._queue_path("incoming", handoff.recipient, handoff.handoff_id)
                 self._write_record(outgoing, handoff)
@@ -286,15 +326,34 @@ class FileBridgeRepository(BridgeRepository):
             finally:
                 os.close(descriptor)
 
+    @staticmethod
+    def _safe_event_id(event_id: str) -> str:
+        normalized = event_id.strip()
+        if (
+            not normalized
+            or normalized != event_id
+            or len(normalized) > 200
+            or Path(normalized).name != normalized
+            or "\\" in normalized
+        ):
+            raise ValueError("invalid event_id")
+        return normalized
+
     def _event_path(self, event_id: str) -> Path:
-        return self.events_root / f"{event_id}.json"
+        return self.events_root / f"{self._safe_event_id(event_id)}.json"
+
+    def _transaction_path(self, event_id: str) -> Path:
+        return self.transactions_root / f"{self._safe_event_id(event_id)}.json"
+
+    def _resolved_transaction_path(self, event_id: str) -> Path:
+        return self.resolved_transactions_root / f"{self._safe_event_id(event_id)}.json"
 
     def prepare_event(self, event: LifecycleEvent) -> None:
         payload = {"phase": "prepared", "event": event.to_dict(), "prepared_at": now_iso()}
-        self._atomic_write_json(self.transactions_root / f"{event.event_id}.json", payload)
+        self._atomic_write_json(self._transaction_path(event.event_id), payload)
 
     def complete_event(self, event_id: str) -> None:
-        path = self.transactions_root / f"{event_id}.json"
+        path = self._transaction_path(event_id)
         path.unlink(missing_ok=True)
         self._fsync_dir(self.transactions_root)
 
@@ -337,6 +396,10 @@ class FileBridgeRepository(BridgeRepository):
         for path in sorted(self.transactions_root.glob("*.json")):
             payload = json.loads(path.read_text(encoding="utf-8"))
             event = LifecycleEvent.from_mapping(dict(payload["event"]))
+            if event.event_id != path.stem:
+                raise RepositoryConflictError(
+                    f"prepared transaction event_id mismatch: path={path.stem} payload={event.event_id}"
+                )
             try:
                 record = self.load_records(event.handoff_id)[0].record
             except HandoffNotFoundError:
@@ -347,6 +410,54 @@ class FileBridgeRepository(BridgeRepository):
             self.complete_event(event.event_id)
             recovered.append(event.event_id)
         return recovered
+
+    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
+        normalized_action = action.strip().lower()
+        if normalized_action not in {"enqueue", "discard"}:
+            raise ValueError("transaction action must be enqueue or discard")
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            raise ValueError("transaction resolution requires a reason")
+        with self._file_lock(f"event:{event_id}"):
+            path = self._transaction_path(event_id)
+            if not path.exists():
+                raise HandoffNotFoundError(f"prepared transaction not found: {event_id}")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            event = LifecycleEvent.from_mapping(dict(payload["event"]))
+            if event.event_id != event_id:
+                raise RepositoryConflictError(
+                    f"prepared transaction event_id mismatch: path={event_id} payload={event.event_id}"
+                )
+            if normalized_action == "enqueue":
+                self.enqueue_event(event)
+            canonical_revision: int | None = None
+            canonical_status: str | None = None
+            try:
+                canonical = self.load_records(event.handoff_id)[0].record
+                canonical_revision = canonical.revision
+                canonical_status = canonical.status
+            except HandoffNotFoundError:
+                pass
+            self._atomic_write_json(
+                self._resolved_transaction_path(event_id),
+                {
+                    "schema_version": CURRENT_SCHEMA_VERSION,
+                    "event": event.to_dict(),
+                    "action": normalized_action,
+                    "reason": normalized_reason[:1000],
+                    "resolved_at": now_iso(),
+                    "canonical_revision": canonical_revision,
+                    "canonical_status": canonical_status,
+                },
+            )
+            self.complete_event(event_id)
+            audit_reason = normalized_reason[:500].replace("\r", " ").replace("\n", " ")
+            self.append_diagnostic_audit(
+                event.handoff_id,
+                "transaction_resolved",
+                f"event_id={event_id} action={normalized_action} reason={audit_reason}",
+            )
+            return event
 
     def _preserve_conflict(self, path: Path, *, reason: str) -> Path:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
@@ -363,6 +474,7 @@ class FileBridgeRepository(BridgeRepository):
             canonical_path = self._canonical_path(handoff_id)
             canonical = next((item for item in records if item.path == canonical_path), None)
             queue_records = [item for item in records if "incoming" in item.path.parts or "outgoing" in item.path.parts]
+            legacy_without_canonical = canonical is None
             if canonical is None:
                 if not queue_records:
                     return [f"{handoff_id}: missing canonical record"]
@@ -386,6 +498,10 @@ class FileBridgeRepository(BridgeRepository):
             for path in expected_paths:
                 if not path.exists():
                     issues.append(f"{handoff_id}: missing mirror {path.relative_to(self.bridge_root)}")
+                    if repair:
+                        self._atomic_write_bytes(path, expected)
+                    continue
+                if legacy_without_canonical:
                     if repair:
                         self._atomic_write_bytes(path, expected)
                     continue
@@ -430,5 +546,13 @@ class FileBridgeRepository(BridgeRepository):
             except (OSError, ValueError, KeyError, HandoffNotFoundError, json.JSONDecodeError):
                 issues.append(f"{path.relative_to(self.bridge_root)}: idempotency index inconsistency")
         for path in sorted(self.transactions_root.glob("*.json")):
-            issues.append(f"{path.stem}: incomplete event transaction")
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                event = LifecycleEvent.from_mapping(dict(payload["event"]))
+                if event.event_id != path.stem:
+                    issues.append(f"{path.stem}: prepared transaction event_id mismatch")
+                else:
+                    issues.append(f"{path.stem}: incomplete event transaction")
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                issues.append(f"{path.stem}: malformed event transaction")
         return issues

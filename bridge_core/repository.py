@@ -76,3 +76,7 @@ class BridgeRepository(ABC):
     @abstractmethod
     def replay_event(self, event_id: str) -> LifecycleEvent:
         raise NotImplementedError
+
+    @abstractmethod
+    def resolve_transaction(self, event_id: str, *, action: str, reason: str) -> LifecycleEvent:
+        raise NotImplementedError
