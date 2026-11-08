@@ -124,7 +124,7 @@ class Store:
         except OSError as exc:
             print(f"warning: event saved; .bell failed: {exc}", file=sys.stderr)
 
-    def publish(self, folder: Path, meta: dict[str, str], body: str) -> None:
+    def publish(self, folder: Path, meta: dict[str, str], body: str) -> str:
         text = dump_document(meta, body)
         sequence = max((int(p.name.split("-", 1)[0]) for p in folder.iterdir()
                         if EVENT_NAME.fullmatch(p.name)), default=-1) + 1
@@ -138,8 +138,10 @@ class Store:
             except FileExistsError:
                 sequence += 1
         # Publish only complete text; readers never see partially written headers.
-        os.link(claim, folder / f"{sequence:02d}-{meta['from']}.md")
+        name = f"{sequence:02d}-{meta['from']}.md"
+        os.link(claim, folder / name)
         self.ring(meta["id"])
+        return name
 
     def new(self, actor: str, recipient: str, subject: str, body: str,
             due: str | None = None) -> str:
@@ -185,7 +187,14 @@ class Store:
         require_change(request["status"], new_status, actor, request["from"],
                        request["to"], body, explicit=status is not None)
         folder = self.locate(ident)
-        self.publish(folder, {"id": ident, "from": actor, "status": new_status, "at": now()}, body)
+        name = self.publish(folder, {"id": ident, "from": actor, "status": new_status, "at": now()}, body)
+        events = self.load(ident)["events"]
+        files = [e["file"] for e in events]
+        ended = next((e["file"] for e in events if e["status"] in TERMINAL), name)
+        if files.index(ended) < files.index(name):
+            print(f"warning: event saved; request already ended by {ended}, so it was ignored for status",
+                  file=sys.stderr)
+            return
         if new_status in TERMINAL and folder.parent.name == "open":
             try:
                 folder.rename(self.root / "done" / ident)

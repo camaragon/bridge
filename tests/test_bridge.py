@@ -288,3 +288,19 @@ def test_listing_skips_unpublished_and_moved_folders(store, tmp_path, monkeypatc
         return original_iterdir(path)
     monkeypatch.setattr(Path, 'iterdir', iterdir_then_move)
     assert moving in [r['id'] for r in store.requests()]
+
+
+def test_writer_losing_terminal_race_is_warned(store, monkeypatch, capsys):
+    ident = store.new('alice', 'bob', 'Race', 'Input')
+    original_load = store.load
+    def load_then_cancel(value):
+        request = original_load(value)
+        monkeypatch.setattr(store, 'load', original_load)
+        store.append(ident, 'alice', 'No longer needed.', 'cancelled')
+        return request
+    monkeypatch.setattr(store, 'load', load_then_cancel)
+    store.append(ident, 'bob', 'Need input.', 'blocked')
+    assert 'ignored for status' in capsys.readouterr().err
+    request = store.load(ident)
+    assert request['status'] == 'cancelled' and (store.root / 'done' / ident).is_dir()
+    assert [e['file'] for e in request['events']] == ['00-alice.md', '01-alice.md', '02-bob.md']
