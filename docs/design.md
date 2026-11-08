@@ -23,9 +23,9 @@ sequence numbers numerically. The filesystem must support hard links and atomic
 same-filesystem directory rename; keep `open/` and `done/` on the same filesystem.
 
 The latest event determines status. `open` and `working` owe the recipient;
-`blocked` owes the sender until the sender answers, then the recipient; `done` and `cancelled` owe nobody. Only the recipient
-sets working/blocked or closes, and closing needs a nonempty outcome. Only the
-sender cancels. Either may reply without changing status. Terminal requests
+`blocked` owes the sender until the sender answers, then the recipient; `done`
+and `cancelled` owe nobody. Only the recipient sets working/blocked or closes,
+and closing needs a nonempty outcome. Only the sender cancels. Either may reply without changing status. Terminal requests
 cannot reopen. A close or cancel publishes its event before renaming the folder
 to `done/`. Readers search both locations and classify by status, so a crash
 between publication and rename still shows a terminal request under `list --done`.
