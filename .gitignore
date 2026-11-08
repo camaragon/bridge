@@ -1,27 +1,14 @@
-# Python
+# Python and local build output
 __pycache__/
 *.py[cod]
-*.pyo
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Virtual environments
+*.egg-info/
+build/
+dist/
 .venv/
 venv/
-
-# Local Bridge runtime state
-bridge/
-
-# Private local shared notes, not part of OSS Bridge core
-core/
-
-# Local config and secrets
-config/bridge_api.env
-config/*.bak-*
+# Keep runtime data outside the source package.
+.bridge-data/
 .env
-
-# OS/editor noise
 .DS_Store
 *.swp
-*.swo

@@ -1,311 +1,144 @@
 # Bridge
 
-Bridge is an event-driven handoff bus for autonomous agents.
+Bridge is a small shared-file CLI for requests between agents. Each request has
+an author, a recipient, an event history, a status, and someone who owes the next
+move. Every kind of agent uses the same commands, including chat-gateway agents
+and remote agents connecting over SSH.
 
-It gives you a bounded place to create, receive, track, and close agent-to-agent work without turning every agent vault into a shared memory swamp.
+There is no server, token store, reminder patrol, or timer. Python 3.10+ on a
+POSIX system is enough; runtime code uses only the standard library.
 
-## What it does
+## Run it
 
-- creates explicit handoff records between agents
-- stores an authoritative canonical record plus recoverable sender and recipient queue views
-- enforces route policy and status transitions
-- exposes a local HTTP API for wrappers and automation
-- supports durable at-least-once lifecycle events plus immediate compatibility notifications
-- supports read-only event consumers for surfacing lifecycle events into chat/UI adapters
-- includes patrol tooling for reminders and unresolved-handoff detection
+Use `bin/bridge` from this checkout, or install the console command in your Python
+environment with `python3 -m pip install .`. Development checks use
+`python3 -m pip install -e '.[dev]'` and `python3 -m pytest -q`.
 
-## Configuration model
+An administrator prepares a shared directory such as `/srv/bridge`, grants the
+participating accounts access, and writes `agents.conf` there. See
+[the permission model](docs/design.md#permissions) before deploying. This CLI
+does not install services, change ACLs, create accounts, or migrate old inboxes.
+Keep the data root separate from this repository's `bridge/` Python package.
 
-Bridge ships with **no built-in agent IDs** and **no default route graph**.
-
-You choose your own agent names. Examples in this README use placeholders like `agent-a` and `agent-b`, but those are only sample values.
-
-Route policy is optional:
-
-- if `BRIDGE_ALLOWED_ROUTES` is unset, Bridge allows any sender -> recipient pair
-- if `BRIDGE_ALLOWED_ROUTES` is set, Bridge only allows the configured pairs
-- API auth tokens are discovered from `BRIDGE_TOKEN_<AGENT_ID>` entries, so your deployed agent IDs come from config, not from the codebase
-
-You do **not** need to edit `bridge_core/models.py` or `bridge_core/policy.py` to adopt your own ecosystem.
-
-For deeper docs, start with `docs/README.md` and `docs/bridge-v2-reliability.md`.
-
-## Repository layout
-
-- `bridge_core/` - core models, policy, auth, repository, and service logic
-- `scripts/` - CLI, wrappers, API server, patrol tooling, intake watcher, and token rotation
-- `tests/` - pytest coverage for core flows, API, wrappers, patrol, and intake watchers
-- `config/bridge_api.example.env` - example config for API tokens and notify hooks
-- `deploy/systemd/` - generic systemd templates for self-hosted deployment
-- `docs/` - architecture, deployment, and runtime documentation
-- `examples/handoffs/` - example markdown payloads for common handoff patterns
-
-## Quick start
-
-### 1) Clone the repo
-
-```bash
-git clone https://github.com/camaragon/bridge.git
-cd bridge
+```text
+# agent  Unix-account  optional command with arguments
+alice    svc-a
+bob      svc-b          /srv/bridge-tools/notify-example.sh bob
+ops      svc-a          /srv/bridge-tools/notify-example.sh ops
 ```
 
-### 2) Confirm Python
+Commands are split using shell-style quoting, but run directly without a shell.
+Accounts must already exist. Agent ids use lowercase letters, digits, `_` and
+`-`, starting with a letter or digit. The configuration and notify executables
+are administrator-managed trusted files.
 
-Bridge uses the Python standard library at runtime.
+Set `BRIDGE_ROOT=/srv/bridge`, or pass `--root /srv/bridge`. Options such as
+`--root` and `--as` work before or after the subcommand. Each `--as` verifies
+that the caller's real uid matches the configured Unix account, including on
+read commands. Running as root does not bypass that check.
 
-```bash
-python3 --version
+## Make and answer a request
+
+Run the sender's command under `svc-a` and the recipient's commands under
+`svc-b` in this example:
+
+```sh
+export BRIDGE_ROOT=/srv/bridge
+bridge new --as alice --to bob --subject 'Review artifact' --due 2030-01-15 < request.md
+# Prints an id such as 20300110-120000-alice-review-artifact
+bridge show 20300110-120000-alice-review-artifact
+bridge reply --as bob 20300110-120000-alice-review-artifact --status working < progress.md
+bridge reply --as bob 20300110-120000-alice-review-artifact --status blocked < question.md
+bridge reply --as alice 20300110-120000-alice-review-artifact < answer.md
+bridge close --as bob 20300110-120000-alice-review-artifact < outcome.md
 ```
 
-Expected: Python 3.10+
+The recipient alone sets `working` or `blocked` and closes with a nonempty
+outcome on stdin. The sender alone cancels:
 
-### 3) Run tests
-
-```bash
-python3 -m pytest -q
+```sh
+bridge cancel --as alice 20300110-120000-alice-review-artifact < reason.md
 ```
 
-### 4) Create a handoff with the direct CLI
+Either participant may reply. A reply without `--status` preserves the status;
+answering a blocked request does not automatically resume it. Active requests
+can become `working`, `blocked`, `done`, or `cancelled`. Once working or blocked,
+they cannot return to `open`. Terminal requests cannot receive further events.
 
-This is the fastest way to see Bridge working.
+| Status | Who owes the next move |
+| --- | --- |
+| `open`, `working` | Recipient |
+| `blocked` | Sender |
+| `done`, `cancelled` | Nobody |
 
-```bash
-python3 scripts/bridge_cli.py create \
-  --sender agent-a \
-  --recipient agent-b \
-  --issue-type task \
-  --subject "Demo handoff" \
-  --requested-action "Inspect the repo and report back" \
-  --minimal-context "Started from the README quickstart" \
-  --idempotency-key "demo-create-1"
+The full UTF-8 event, including frontmatter, is limited to 64 KiB. Use LF line
+endings; control characters other than LF and tab are refused. For larger
+artifacts, put a readable file path in the Markdown body. A path is a reference,
+not an attachment upload or an access grant.
+
+## Find requests and unread events
+
+```sh
+bridge list                                  # All active requests
+bridge list --as bob --mine                   # Active requests involving bob
+bridge list --as bob --owed                   # Active requests bob owes
+bridge list --done                           # All done and cancelled requests
+bridge show 20300110-120000-alice-review-artifact --json
+bridge unseen --as bob --json
+bridge unseen --as bob --mark --json
 ```
 
-You should get JSON like:
+`list` includes age and due date. `list`, `show`, and `unseen` support `--json`.
+JSON warnings flag events whose file owner does not match the declared author's
+account; text output displays those warnings too. Readers with filesystem access
+can see all requests, including completed ones.
 
-```json
-{
-  "handoff_id": "HND-20260426-000000-abcd",
-  "outbox": ".../bridge/outgoing/agent-a/HND-...md",
-  "inbox": ".../bridge/incoming/agent-b/HND-...md"
-}
+`unseen` lists individual events on requests the agent participates in, excluding
+its own events. Without `--mark` it changes nothing. `--mark` returns and marks
+the same snapshot. Seen keys are `request-id/event-file`, so a move from `open/`
+to `done/` never makes a read event unread again. State defaults to
+`$XDG_STATE_HOME/bridge/<agent>.seen`, or `~/.local/state/bridge/<agent>.seen`;
+`--state-dir` overrides the directory. Keep that state local to the consumer.
+Mark only after your consumer has handled the events; repeated delivery can be
+deduplicated using each event's JSON `key`. With concurrent arrivals, process the
+snapshot returned by `--mark` as well, rather than discarding its output.
+
+## Storage and waking agents
+
+```text
+/srv/bridge/
+  agents.conf
+  open/.bell
+  open/20300110-120000-alice-review-artifact/
+    00-alice.md
+    01-bob.md
+  done/<completed-id>/...
 ```
 
-List open handoffs for the recipient:
-
-```bash
-python3 scripts/bridge_cli.py list-open --agent agent-b
-```
-
-Mark it closed:
-
-```bash
-python3 scripts/bridge_cli.py set-status --actor agent-b HND-... closed --outcome "Completed and reported back"
-```
-
-Archive it:
-
-```bash
-python3 scripts/bridge_cli.py archive --actor agent-b HND-...
-```
-
-## HTTP API quick start
-
-The wrappers prefer the local API.
-
-### 1) Create a local config file
-
-```bash
-mkdir -p config
-cp config/bridge_api.example.env config/bridge_api.env
-mkdir -p bridge/incoming bridge/outgoing bridge/archive bridge/audit
-```
-
-Edit `config/bridge_api.env` and replace:
-
-- `BRIDGE_TOKEN_AGENT_A`
-- `BRIDGE_TOKEN_AGENT_B`
-- `BRIDGE_TOKEN_AGENT_C`
-
-with real secret values.
-
-You usually do **not** need to change `BRIDGE_ROOT` or `BRIDGE_API_CONFIG` if you are running from this repo checkout.
-
-### 2) Start the API server
-
-```bash
-python3 scripts/bridge_api_server.py
-```
-
-By default it listens on `127.0.0.1:8427`.
-
-### 3) Check health
-
-```bash
-curl http://127.0.0.1:8427/v1/health
-```
-
-Expected:
-
-```json
-{"ok": true, "service": "bridge-api"}
-```
-
-### 4) Use a wrapper
-
-```bash
-python3 scripts/bridge_agent.py --agent agent-a create \
-  --recipient agent-b \
-  --issue-type task \
-  --subject "Wrapper demo" \
-  --requested-action "Verify API-backed handoff creation" \
-  --minimal-context "Started from the README API quickstart"
-```
-
-List open handoffs:
-
-```bash
-python3 scripts/bridge_agent.py --agent agent-b list-open
-```
-
-Acknowledge receipt:
-
-```bash
-python3 scripts/bridge_agent.py --agent agent-b ack HND-...
-```
-
-Close with a resolution summary:
-
-```bash
-python3 scripts/bridge_agent.py --agent agent-b close HND-... --outcome "Verified and complete"
-```
-
-## API endpoints
-
-- `GET /v1/health`
-- `POST /v1/handoffs`
-- `GET /v1/handoffs`
-- `GET /v1/handoffs/{handoff_id}`
-- `POST /v1/handoffs/{handoff_id}/ack`
-- `POST /v1/handoffs/{handoff_id}/block`
-- `POST /v1/handoffs/{handoff_id}/close`
-- `POST /v1/handoffs/{handoff_id}/cancel`
-- `POST /v1/handoffs/{handoff_id}/status`
-- `POST /v1/handoffs/{handoff_id}/archive`
-
-Create accepts `Idempotency-Key` or `idempotency_key`. Lifecycle writes accept `expected_revision` or an `If-Match` header and return HTTP 409 for stale revisions.
-
-Durable outbox and reconciliation commands:
-
-```bash
-python3 scripts/bridge_cli.py outbox-list --state pending
-python3 scripts/bridge_cli.py outbox-deliver --limit 100
-python3 scripts/bridge_cli.py outbox-replay EVT-...
-python3 scripts/bridge_cli.py outbox-recover
-python3 scripts/bridge_cli.py outbox-resolve-transaction EVT-... --action enqueue --reason "verified missing delivery"
-python3 scripts/bridge_cli.py reconcile --check-only
-```
-
-## Lifecycle notifications
-
-Bridge supports two layers of notification behavior:
-
-1. **recipient notify URLs**
-   - configured with `BRIDGE_NOTIFY_URL_<AGENT>`
-   - Bridge POSTs lifecycle events to recipient listeners
-
-2. **read-only lifecycle event consumers**
-   - configured with `BRIDGE_NOTIFY_EVENT_COMMAND_<AGENT>`
-   - `bridge_intake_watch.py` can execute a command for `handoff_closed` and `handoff_blocked`
-   - the command receives raw JSON on stdin
-   - this keeps Bridge core separate from Telegram, BlueBubbles, Slack, or other UI-specific adapters
-
-3. **read-only intake event consumers**
-   - configured with `BRIDGE_INTAKE_EVENT_COMMAND_<AGENT>` or generic `BRIDGE_INTAKE_EVENT_COMMAND`
-   - agent-scoped commands take precedence over the generic command; CLI `--intake-event-command` overrides both
-   - `bridge_intake_watch.py` can execute a command after auto-acknowledging a newly received handoff
-   - the command receives a generic `handoff_acknowledged` JSON event on stdin
-   - use this for local work-queue mirroring, indexing, or alerting without baking those systems into Bridge
-
-Run a recipient listener:
-
-```bash
-python3 scripts/bridge_intake_watch.py --agent agent-b --listen --port 8522
-```
-
-Run a one-shot inbox check:
-
-```bash
-python3 scripts/bridge_intake_watch.py --agent agent-b --once
-```
-
-## Patrol and unresolved handoff detection
-
-Bridge includes patrol tooling for follow-up pressure without mutating the API surface.
-
-See `docs/runtime-layout.md` for runtime directory expectations.
-
-Run patrol manually:
-
-```bash
-python3 scripts/bridge_patrol.py --stuck-hours 24
-```
-
-Patrol can:
-
-- detect unacknowledged open handoffs
-- re-hit notify endpoints after a delay
-- emit active unresolved alerts for placeholder summaries like `pending`
-- deduplicate reminders through `bridge/audit/patrol-reminders.json`
-
-## Configuration
-
-Main runtime variables:
-
-- `BRIDGE_PROJECT_ROOT`
-- `BRIDGE_ROOT`
-- `BRIDGE_API_CONFIG`
-- `BRIDGE_API_HOST`
-- `BRIDGE_API_PORT`
-- `BRIDGE_TOKEN_AGENT_A`
-- `BRIDGE_TOKEN_AGENT_B`
-- `BRIDGE_TOKEN_AGENT_C`
-- `BRIDGE_NOTIFY_URL_<AGENT_ID>`
-- `BRIDGE_NOTIFY_EVENT_COMMAND_<AGENT_ID>`
-- `BRIDGE_ALLOWED_ROUTES`
-
-## Safety boundary
-
-Bridge is intentionally split like this:
-
-- **Bridge core** owns handoff state, auditability, and lifecycle events
-- **adapters/listeners** decide how to surface those events to humans or agent runtimes
-
-That keeps the core OSS-friendly and prevents messaging-platform logic from being baked into the handoff engine.
-
-## Deployment
-
-Generic systemd templates live in:
-
-- `deploy/systemd/bridge-api.service`
-- `deploy/systemd/bridge-intake-watch@.service`
-- `deploy/systemd/example-agent.env`
-
-These are templates for self-hosted deployments, not host-specific copies.
-
-## Development
-
-Run the full test suite:
-
-```bash
-pytest -q
-```
-
-Compile-check scripts and tests:
-
-```bash
-python3 -m py_compile bridge_core/*.py scripts/*.py tests/*.py
-```
-
-## License
-
-Apache-2.0
+Events are write-once Markdown files. Status and who owes a reply come from the
+latest event. Closing or cancelling writes a terminal event and moves the folder
+to `done/`. If the process stops between those actions, `list --done` still finds
+it by its event status. Sequence allocation uses hidden write-once reservations
+inside each request; see [the design](docs/design.md).
+
+Every write rewrites `open/.bell` in place. The example
+[systemd path unit](examples/bridge-wake.path) watches that one file, including
+replies in nested request folders. Its paired [service](examples/bridge-wake.service)
+checks `unseen` before waking an agent. No timer is needed.
+
+After each event, the other participant's optional notify command runs as the
+writing Unix account. It receives **one line on stdin** containing the request
+id, author, subject, and `bridge show <id>` pointer. `BRIDGE_ROOT` is set in its
+environment. The command can wake any runtime through a site-provided adapter;
+Bridge does not depend on a chat transport or a particular agent framework.
+It runs for at most ten seconds. Failure produces a warning but the saved event
+remains available through `list`, `show`, and `unseen`.
+
+[notify-example.sh](examples/notify-example.sh) shows both direct notifications
+and an unseen-based path-unit wake. Customize the adapter and service account
+before using the examples. The consumer reads and answers through Bridge; the
+notification is only a doorbell. There are no automated reminders.
+
+See [request](examples/handoffs/request.md) and
+[closure](examples/handoffs/closure.md) for the event format. The previous API,
+tokens, watchers, patrol, and transaction/outbox design remain in Git history.
