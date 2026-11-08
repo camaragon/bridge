@@ -258,3 +258,33 @@ def test_unpublished_claim_is_skipped(store):
     store.append(ident, 'bob', 'This event survives.')
     files = [event['file'] for event in store.load(ident)['events']]
     assert files == ['00-alice.md', '02-bob.md']
+
+
+def test_reply_racing_close_cannot_reopen(store):
+    ident = store.new('alice', 'bob', 'Race', 'Input')
+    stale = store.load(ident)
+    store.append(ident, 'bob', 'Finished.', 'done')
+    folder = store.root / 'done' / ident
+    store.publish(folder, {'id': ident, 'from': 'alice', 'status': stale['status'], 'at': '2030-01-01T00:00:00+00:00'}, 'Late.')
+    request = store.load(ident)
+    assert request['status'] == 'done' and request['owes'] is None
+    assert any(w.startswith('02-alice.md: published after') for w in request['warnings'])
+    with pytest.raises(ValueError, match='transition'):
+        store.append(ident, 'alice', 'Again?')
+    assert json.loads(run(store, 'list', '--json').stdout) == []
+
+
+def test_listing_skips_unpublished_and_moved_folders(store, tmp_path, monkeypatch):
+    ident = store.new('alice', 'bob', 'Published', 'Input')
+    (store.root / 'open' / '20300101-000000-alice-empty').mkdir()
+    assert [r['id'] for r in store.requests()] == [ident]
+    assert len(unseen(store, 'bob', tmp_path / 'state', False)) == 1
+    assert json.loads(run(store, 'list', '--json').stdout)[0]['id'] == ident
+    moving = store.new('alice', 'bob', 'Moving', 'Input')
+    original_iterdir = Path.iterdir
+    def iterdir_then_move(path):
+        if path.name == moving and path.parent.name == 'open':
+            path.rename(store.root / 'done' / moving)
+        return original_iterdir(path)
+    monkeypatch.setattr(Path, 'iterdir', iterdir_then_move)
+    assert moving in [r['id'] for r in store.requests()]

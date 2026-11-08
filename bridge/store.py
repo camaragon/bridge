@@ -14,6 +14,10 @@ EVENT_NAME = re.compile(r"^(\d+)-([a-z0-9][a-z0-9_-]*)\.md$")
 REQUEST_ID = re.compile(r"^\d{8}-\d{6}-[a-z0-9][a-z0-9_-]*$")
 
 
+class Missing(ValueError):
+    pass
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -48,14 +52,17 @@ class Store:
             path = self.root / area / ident
             if path.is_dir():
                 return path
-        raise ValueError(f"request not found: {ident}")
+        raise Missing(f"request not found: {ident}")
 
     def load(self, ident: str) -> dict:
-        folder = self.locate(ident)
-        paths = sorted((p for p in folder.iterdir() if EVENT_NAME.fullmatch(p.name)),
+        try:
+            names = list(self.locate(ident).iterdir())
+        except FileNotFoundError:
+            names = list(self.locate(ident).iterdir())
+        paths = sorted((p for p in names if EVENT_NAME.fullmatch(p.name)),
                        key=lambda p: (int(p.name.split("-", 1)[0]), p.name))
         if not paths:
-            raise ValueError(f"request has no events: {ident}")
+            raise Missing(f"request has no events: {ident}")
         events = []
         for path in paths:
             # A close can move the whole directory during this read.
@@ -77,7 +84,10 @@ class Store:
                 warnings.append("filename author does not match frontmatter")
             events.append({**meta, "body": body, "file": path.name,
                            "key": f"{ident}/{path.name}", "owner_uid": uid, "warnings": warnings})
-        first, last = events[0], events[-1]
+        first = events[0]
+        last = next((e for e in events if e["status"] in TERMINAL), events[-1])
+        for event in events[events.index(last) + 1:]:
+            event["warnings"].append("published after the request ended; ignored for status")
         if any(not first.get(key) for key in ("from", "to", "subject", "at")):
             raise ValueError(f"incomplete request header: {ident}")
         created = datetime.fromisoformat(first["at"])
@@ -94,7 +104,13 @@ class Store:
             parent = self.root / area
             if parent.exists():
                 ids.update(p.name for p in parent.iterdir() if p.is_dir() and REQUEST_ID.fullmatch(p.name))
-        return [self.load(ident) for ident in sorted(ids)]
+        loaded = []
+        for ident in sorted(ids):
+            try:
+                loaded.append(self.load(ident))
+            except Missing:
+                pass
+        return loaded
 
     def ring(self, ident: str) -> None:
         path = self.root / "open" / ".bell"

@@ -116,7 +116,7 @@ snapshot returned by `--mark` as well, rather than discarding its output.
 ```
 
 Events are write-once Markdown files. Status and who owes a reply come from the
-latest event. Closing or cancelling writes a terminal event and moves the folder
+latest event, or the first terminal event if one exists. Closing or cancelling writes a terminal event and moves the folder
 to `done/`. If the process stops between those actions, `list --done` still finds
 it by its event status. Sequence allocation uses hidden write-once reservations
 inside each request; see [the design](docs/design.md).
