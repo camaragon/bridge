@@ -30,7 +30,8 @@ cannot reopen. A close or cancel publishes its event before renaming the folder
 to `done/`. Readers search both locations and classify by status, so a crash
 between publication and rename still shows a terminal request under `list --done`.
 The first terminal event is final: an event a concurrent writer publishes after it
-is kept but flagged with a warning and does not change status. Listings skip a
+is kept but flagged with a warning, does not change status, and its writer gets
+a stderr warning. Listings skip a
 request folder that has no published event yet or vanishes while being read.
 
 ## Permissions
