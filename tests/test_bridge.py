@@ -41,7 +41,8 @@ def test_lifecycle_and_owes(store):
     store.append(ident, 'bob', 'Which revision?', 'blocked')
     assert store.load(ident)['owes'] == 'alice'
     store.append(ident, 'alice', 'Revision 2.')
-    assert store.load(ident)['status'] == 'blocked'
+    answered = store.load(ident)
+    assert answered['status'] == 'blocked' and answered['owes'] == 'bob'
     store.append(ident, 'bob', 'Resuming.', 'working')
     store.append(ident, 'bob', 'Reviewed; result: /srv/artifacts/result.md', 'done')
     request = store.load(ident)

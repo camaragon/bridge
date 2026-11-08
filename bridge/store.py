@@ -85,7 +85,7 @@ class Store:
         return {"id": ident, "from": first["from"], "to": first["to"],
                 "subject": first["subject"], "due": first.get("due"), "at": first["at"],
                 "age_seconds": age, "status": last["status"],
-                "owes": owes(last["status"], first["from"], first["to"]),
+                "owes": owes(last["status"], first["from"], first["to"], last["from"]),
                 "events": events, "warnings": [f"{e['file']}: {w}" for e in events for w in e["warnings"]]}
 
     def requests(self) -> list[dict]:

@@ -28,7 +28,7 @@ def require_change(current: str, status: str, actor: str, sender: str,
         raise ValueError("only the recipient may set working or blocked")
 
 
-def owes(status: str, sender: str, recipient: str) -> str | None:
+def owes(status: str, sender: str, recipient: str, author: str) -> str | None:
     if status in TERMINAL:
         return None
-    return sender if status == "blocked" else recipient
+    return sender if status == "blocked" and author != sender else recipient

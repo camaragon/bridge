@@ -68,7 +68,7 @@ they cannot return to `open`. Terminal requests cannot receive further events.
 | Status | Who owes the next move |
 | --- | --- |
 | `open`, `working` | Recipient |
-| `blocked` | Sender |
+| `blocked` | Sender, until the sender answers; then recipient |
 | `done`, `cancelled` | Nobody |
 
 The full UTF-8 event, including frontmatter, is limited to 64 KiB. Use LF line
