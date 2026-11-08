@@ -1,0 +1,4 @@
+# agent  Unix-account  optional executable and quoted arguments (no shell)
+alice    svc-a
+bob      svc-b          /srv/bridge-tools/notify-example.sh bob
+ops      svc-a          /srv/bridge-tools/notify-example.sh ops

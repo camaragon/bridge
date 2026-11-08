@@ -1,0 +1,8 @@
+[Unit]
+Description=Wake a Bridge consumer with unseen events
+
+[Service]
+Type=oneshot
+# User unit: run under the Unix account configured for ops.
+Environment=BRIDGE_ROOT=/srv/bridge
+ExecStart=/srv/bridge-tools/notify-example.sh --unseen ops
