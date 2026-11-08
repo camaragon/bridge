@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch the shared Bridge doorbell
+
+[Path]
+PathChanged=/srv/bridge/open/.bell
+Unit=bridge-wake.service
+
+[Install]
+WantedBy=default.target
