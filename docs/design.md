@@ -25,14 +25,15 @@ same-filesystem directory rename; keep `open/` and `done/` on the same filesyste
 The latest event determines status. `open` and `working` owe the recipient;
 `blocked` owes the sender until the sender answers, then the recipient; `done`
 and `cancelled` owe nobody. Only the recipient sets working/blocked or closes,
-and closing needs a nonempty outcome. Only the sender cancels. Either may reply without changing status. Terminal requests
-cannot reopen. A close or cancel publishes its event before renaming the folder
-to `done/`. Readers search both locations and classify by status, so a crash
-between publication and rename still shows a terminal request under `list --done`.
-The first terminal event is final: an event a concurrent writer publishes after it
-is kept but flagged with a warning, does not change status, and its writer gets
-a stderr warning. Listings skip a
-request folder that has no published event yet or vanishes while being read.
+and closing needs a nonempty outcome. Only the sender cancels. Either may reply
+without changing status. Terminal requests cannot reopen. A close or cancel
+publishes its event before renaming the folder to `done/`. Readers search both
+locations and classify by status, so a crash between publication and rename
+still shows a terminal request under `list --done`. The first terminal event is
+final: an event a concurrent writer publishes after it is kept but flagged with
+a warning, does not change status, and its writer gets a stderr warning.
+Listings skip a request folder that has no published event yet or vanishes while
+being read.
 
 ## Permissions
 
